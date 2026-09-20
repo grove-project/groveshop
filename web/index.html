@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="en" data-grove-artifact="grove-shop-ui-v1">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Grove Shop</title>
+  <style>
+    :root { color-scheme: light; font-family: ui-sans-serif, system-ui, sans-serif; }
+    body { margin: 0; background: #f4f7f2; color: #183126; }
+    main { display: grid; grid-template-columns: 3fr 2fr; gap: 1rem; max-width: 72rem; margin: 0 auto; padding: 2rem; }
+    section { min-height: 16rem; padding: 1.5rem; border: 1px solid #cad8cf; border-radius: 0.75rem; background: white; }
+    h1, h2 { margin-top: 0; }
+    .progress { color: #38664d; font-weight: 600; }
+    form { display: grid; grid-template-columns: 2fr 1fr auto; gap: 0.5rem; margin: 1.25rem 0; }
+    input, button { padding: 0.7rem; border: 1px solid #9db4a6; border-radius: 0.4rem; font: inherit; }
+    button { border-color: #235c3d; background: #235c3d; color: white; cursor: pointer; }
+    ul { padding-left: 1.25rem; }
+    .status-grid { display: grid; gap: 0.75rem; }
+    .status-card { padding: 0.75rem; border-radius: 0.5rem; background: #eef4f0; }
+    .status-card strong { display: block; margin-bottom: 0.25rem; }
+    .healthy { color: #176338; }
+    .degraded, .failed { color: #a13b2a; }
+    .muted { color: #617269; }
+    code { overflow-wrap: anywhere; }
+    @media (max-width: 48rem) { main { grid-template-columns: 1fr; padding: 1rem; } }
+    @media (max-width: 32rem) { form { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+  <main>
+    <section aria-labelledby="orders-heading">
+      <h1 id="orders-heading">Grove Shop Orders</h1>
+      <p>Create and inspect orders through the Grove-managed application.</p>
+      <p class="progress">Created → Reserved → Paid → Shipping → Completed</p>
+      <form id="order-form">
+        <input id="order-sku" name="sku" value="coffee-beans" aria-label="SKU" required>
+        <input id="order-quantity" name="quantity" type="number" value="1" min="1" aria-label="Quantity" required>
+        <button type="submit">Create order</button>
+      </form>
+      <p id="order-result" class="muted">No orders yet.</p>
+      <ul id="orders"></ul>
+    </section>
+    <section aria-labelledby="cluster-heading">
+      <h2 id="cluster-heading">Grove Cluster Status</h2>
+      <p id="cluster-summary" class="muted">Connecting to Grove…</p>
+      <div class="status-grid">
+        <div class="status-card"><strong>Nodes</strong><ul id="nodes"></ul></div>
+        <div class="status-card"><strong>Placement</strong><ul id="placements"></ul></div>
+        <div class="status-card"><strong>Deployment</strong><ul id="deployment"></ul></div>
+      </div>
+    </section>
+  </main>
+  <script>
+    const statusIntervalMilliseconds = 750;
+
+    function textList(element, values) {
+      element.replaceChildren(...values.map(value => {
+        const item = document.createElement("li");
+        item.textContent = value;
+        return item;
+      }));
+    }
+
+    async function refreshStatus() {
+      const summary = document.querySelector("#cluster-summary");
+      try {
+        const response = await fetch("/grove/status", {cache: "no-store"});
+        if (!response.ok) throw new Error(await response.text());
+        const status = await response.json();
+        summary.textContent = `${status.health.toUpperCase()} · ${status.nodes.length} Grovlets`;
+        summary.className = status.health;
+        textList(document.querySelector("#nodes"), status.nodes.map(node =>
+          `${node.node_id}: ${node.health}`));
+        textList(document.querySelector("#placements"), status.placements.map(placement =>
+          `${placement.name} → ${placement.node_id} (${placement.health})`));
+        const active = status.active_artifact;
+        const candidate = status.candidate_artifact;
+        const rollout = status.rollout;
+        const lines = [];
+        if (active) lines.push(`Active ${active.config_revision} · ${active.artifact_digest}`);
+        if (candidate) lines.push(`Candidate ${candidate.config_revision} · ${candidate.artifact_digest}`);
+        if (rollout) lines.push(`Phase ${rollout.phase} · generation ${rollout.generation}`);
+        if (rollout?.failure) lines.push(`${rollout.failure.component}: ${rollout.failure.message}`);
+        textList(document.querySelector("#deployment"), lines);
+      } catch (error) {
+        summary.textContent = `Status unavailable: ${error.message}`;
+        summary.className = "failed";
+      }
+    }
+
+    async function refreshOrders() {
+      const response = await fetch("/api/orders", {cache: "no-store"});
+      if (!response.ok) throw new Error(await response.text());
+      const orders = await response.json();
+      textList(document.querySelector("#orders"), orders.map(order =>
+        `${order.ID}: ${order.Status} · ${order.History.join(" → ")}`));
+    }
+
+    document.querySelector("#order-form").addEventListener("submit", async event => {
+      event.preventDefault();
+      const result = document.querySelector("#order-result");
+      const orderID = `web-${Date.now()}`;
+      const request = {
+        OrderID: orderID,
+        SKU: document.querySelector("#order-sku").value,
+        Quantity: Number(document.querySelector("#order-quantity").value),
+        AmountCents: 1200,
+        ShippingAddress: "30 Grove Lane"
+      };
+      try {
+        const response = await fetch("/api/orders", {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify(request)
+        });
+        if (!response.ok) throw new Error(await response.text());
+        const order = await response.json();
+        result.textContent = `${order.ID} completed: ${order.History.join(" → ")}`;
+        await refreshOrders();
+      } catch (error) {
+        document.querySelector("#order-result").textContent = `Order failed: ${error.message}`;
+      }
+    });
+
+    refreshStatus();
+    refreshOrders().catch(() => {});
+    setInterval(refreshStatus, statusIntervalMilliseconds);
+  </script>
+</body>
+</html>

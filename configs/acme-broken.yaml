@@ -1,0 +1,9 @@
+revision: acme-broken-r43
+customer:
+  name: Acme Retail
+cluster:
+  name: acme-local
+node:
+  zone: local
+inventory:
+  reservation_buffer: -1

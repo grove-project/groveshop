@@ -1,0 +1,9 @@
+revision: acme-r42
+customer:
+  name: Acme Retail
+cluster:
+  name: acme-local
+node:
+  zone: local
+inventory:
+  reservation_buffer: 100

@@ -1,0 +1,4 @@
+github.com/grove-project/grove v0.0.0-20260920025736-822270f161e9 h1:6Ln5SIN1M+C48dyo38w91NCqkrGKwGBVw+uRdcTP7pU=
+github.com/grove-project/grove v0.0.0-20260920025736-822270f161e9/go.mod h1:iebXXp0GiA3HyuALRjxdoSi4Qablkrb4KUfMym9TDBw=
+go.yaml.in/yaml/v3 v3.0.5 h1:N6y/pJk8buWs9NY5ERU2HSMfm+IuD/OtfdAnq6kESPw=
+go.yaml.in/yaml/v3 v3.0.5/go.mod h1:HVTZu1O7/Vkt2N+BFy8Zza+lnLsABggaTM2ZpNIGuKg=
