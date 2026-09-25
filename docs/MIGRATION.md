@@ -26,44 +26,34 @@ The module pins Grove's current main revision as a normal versioned dependency.
 It intentionally has no local `replace` directive. This makes Go enforce the
 same public-package boundary that any other Grove application sees.
 
-## Remaining boundary
+## Runtime boundary
 
-The current Grove Shop executable is still implemented by
-`grove/cmd/grovlet`. Its console/controller, artifact lifecycle, cluster
-bootstrap, placement, rollout, recovery, and debugging code import:
+Grove now exposes a public `github.com/grove-project/grove/runtime` package:
+an explicit `Definition`/`Component`/`Scenario` composition boundary that owns
+infrastructure (discovery, node bootstrap/join, artifact identity, the shared
+cluster read model, stable ingress, rollout/rollback, recovery, worker
+supervision, and debug target resolution) while accepting application-owned
+hooks for identity, service registration, configuration compile/decode, the
+embedded Web handler, and console actions.
 
-```text
-github.com/grove-project/grove/internal/artifact
-github.com/grove-project/grove/internal/bootstrap
-github.com/grove-project/grove/internal/debuggateway
-github.com/grove-project/grove/internal/systemnats
+`runtimeapp/application.go` in this module is that composition: it builds a
+`runtime.Definition` from this package's ordinary business services and
+registers them, and `cmd/groveshop/main.go` is the resulting executable:
+
+```go
+func main() {
+	groveruntime.Main(runtimeapp.RuntimeDefinition())
+}
 ```
 
-Go correctly prevents this module from importing those packages. Copying the
-runtime implementation here would duplicate Grove inside its example and would
-not demonstrate Grove as a package.
-
-## Next extraction slice
-
-Grove needs a public application-runtime boundary that owns the infrastructure
-and accepts application-owned hooks. The smallest useful surface must let Grove
-Shop provide:
-
-- its stable application identity and build metadata;
-- service registrations and component factories;
-- configuration compile/decode hooks;
-- the embedded Web handler;
-- application-specific console actions.
-
-Grove should continue to own discovery, node bootstrap/join, artifact identity,
-the shared cluster read model, stable ingress, rollout/rollback, recovery,
-worker supervision, and debug target resolution.
-
-Once that boundary exists, this repository can add `cmd/groveshop` as thin
-composition code and migrate the existing command/E2E tests without changing
-the user flow documented in `DEMO_FLOW.md`.
+Grove's own `internal/*` packages remain invisible to this module — Go's
+internal-package visibility rule enforces that regardless of how this module
+depends on Grove, which is what makes this a real (not merely nominal)
+extraction. Grove's own repository proves the same boundary from its side with
+a dependency-boundary test and an external-module build smoke test.
 
 ## Source baseline
 
 Application code and demo contracts were migrated from Grove `origin/main` at
-`822270f161e9d83fd6f15ad08ce0a2ebae002ad6`.
+`822270f161e9d83fd6f15ad08ce0a2ebae002ad6`; the runtime boundary above was
+migrated once Grove's `runtime` package existed to support it.

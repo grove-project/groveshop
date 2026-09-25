@@ -21,7 +21,7 @@ if err := groveshop.RegisterInventory(registry, inventory); err != nil {
 }
 ```
 
-The repository currently contains the first migration slice:
+The repository contains the complete extraction:
 
 - Grove Shop business services and deterministic order flow;
 - explicit Grove service and method registration;
@@ -30,14 +30,23 @@ The repository currently contains the first migration slice:
 - the embedded Orders and Cluster Status Web UI;
 - good and intentionally broken demo configurations;
 - unit and integration tests running against Grove as a versioned dependency;
+- `runtimeapp`, the explicit composition boundary that connects this
+  application to Grove's public `runtime` package;
+- `cmd/groveshop`, the executable that starts Grove Shop through Grove;
 - the complete target demo contract under [`docs/`](docs/DEMO_FLOW.md).
 
-The executable runtime is the remaining extraction boundary. Today it is
-implemented in Grove's `cmd/grovlet` command and imports Grove-private
-`internal/*` packages, so it cannot yet be built by this external module. See
-[`docs/MIGRATION.md`](docs/MIGRATION.md) for the boundary and next steps. The
-target bootstrap, join, rollout, rollback, stable-ingress, recovery, and native
-debugging flow remains unchanged.
+Grove Shop consumes Grove entirely through public packages
+(`github.com/grove-project/grove`, `.../console`, `.../runtime`) — no
+Grove-internal package, type, or business assumption is required. Build and
+run the same binary Grove starts in a cluster:
+
+```bash
+go build -o ./bin/groveshop ./cmd/groveshop
+./bin/groveshop
+```
+
+See [`docs/MIGRATION.md`](docs/MIGRATION.md) for how this boundary was
+proven from the Grove side.
 
 ## Demo contract
 
