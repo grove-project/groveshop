@@ -29,6 +29,11 @@ The Cluster Status pane continuously polls Grove and shows cluster health, nodes
 
 Target polling interval for MVP: approximately 500 ms to 1 second. Use HTTP polling, not WebSockets/SSE, unless a later task changes this requirement.
 
+## Load & capacity demo
+A full-width section above the panes has one control, **Load ON / OFF**, plus live metrics measured by Grove Shop itself (nodes, orders/sec, p50/p95, in-flight, generated load, completed/failed, completion rate, last recovery) and one timeline that does not reset when topology changes. Node joined/lost, load-generator relocated, and workload recovered are annotated on it.
+
+The browser only toggles the experiment. The `LoadGen` component (service 6) is placed once cluster-wide, drives complete orders through the normal `Orders` service, and adapts its concurrency by hill-climbing on measured throughput and latency (no fixed target). Grove recovers it like any other placed service; the Web component's `LoadMonitor` re-applies Load ON to the relocated generator and stitches the timeline.
+
 ## Stable browser continuity
 The browser must stay open on the same Grove-managed ingress URL and port before, during, and after rollout/rollback.
 

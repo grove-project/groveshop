@@ -3,7 +3,7 @@ module github.com/grove-project/groveshop
 go 1.26.0
 
 require (
-	github.com/grove-project/grove v0.0.0-20260925114933-21d96ed64e03
+	github.com/grove-project/grove v0.0.0-20260926123840-5a035fa003a9
 	go.yaml.in/yaml/v3 v3.0.5
 )
 
