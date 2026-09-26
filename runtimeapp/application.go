@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"slices"
+	"strings"
 
 	"github.com/grove-project/grove"
 	"github.com/grove-project/groveshop"
@@ -16,7 +17,7 @@ import (
 	"go.yaml.in/yaml/v3"
 )
 
-const artifactManifest = `{"format_version":1,"application_id":"grove-shop","code_version":"v0.1.0-dev","components":[{"service_id":1,"name":"Orders","runtime":"process","entrypoint":["worker","--component","orders"]},{"service_id":2,"name":"Inventory","runtime":"process","entrypoint":["worker","--component","inventory"]},{"service_id":3,"name":"Payment","runtime":"process","entrypoint":["worker","--component","payment"]},{"service_id":4,"name":"Shipping","runtime":"process","entrypoint":["worker","--component","shipping"]},{"service_id":5,"name":"Web","runtime":"process","entrypoint":["worker","--component","web"]}],"ui_assets":["web/index.html"],"config_region":{"format_version":1,"capacity":4096}}`
+const artifactManifest = `{"format_version":1,"application_id":"grove-shop","code_version":"v0.1.0-dev","components":[{"service_id":1,"name":"Orders","runtime":"process","entrypoint":["worker","--component","orders"]},{"service_id":2,"name":"Inventory","runtime":"process","entrypoint":["worker","--component","inventory"]},{"service_id":3,"name":"Payment","runtime":"process","entrypoint":["worker","--component","payment"]},{"service_id":4,"name":"Shipping","runtime":"process","entrypoint":["worker","--component","shipping"]},{"service_id":5,"name":"Web","runtime":"process","entrypoint":["worker","--component","web"]},{"service_id":6,"name":"LoadGen","runtime":"process","entrypoint":["worker","--component","loadgen"]}],"ui_assets":["web/index.html"],"config_region":{"format_version":1,"capacity":4096}}`
 
 var embeddedArtifact = groveruntime.ArtifactManifestPrefix + artifactManifest + groveruntime.ArtifactManifestSuffix +
 	groveruntime.ArtifactConfigPrefix + groveruntime.BlankConfigRegion + groveruntime.ArtifactConfigSuffix
@@ -36,11 +37,17 @@ func RuntimeDefinition() groveruntime.Definition {
 			Failure: runtimeConfigurationFailure,
 		},
 		Components: []groveruntime.Component{
-			{ServiceID: groveshop.ServiceOrders, Name: "Orders", Kind: "orders", Register: registerRuntimeOrders},
-			{ServiceID: groveshop.ServiceInventory, Name: "Inventory", Kind: "inventory", Register: registerRuntimeInventory},
-			{ServiceID: groveshop.ServicePayment, Name: "Payment", Kind: "payment", Register: registerRuntimePayment},
-			{ServiceID: groveshop.ServiceShipping, Name: "Shipping", Kind: "shipping", Register: registerRuntimeShipping},
+			{ServiceID: groveshop.ServiceOrders, Name: "Orders", Kind: "orders", Register: registerRuntimeOrders,
+				Handlers: []groveruntime.HandlerSpec{{Method: groveshop.MethodCreateOrder, Name: "Create"}}},
+			{ServiceID: groveshop.ServiceInventory, Name: "Inventory", Kind: "inventory", Register: registerRuntimeInventory,
+				Handlers: []groveruntime.HandlerSpec{{Method: groveshop.MethodReserve, Name: "Reserve"}}},
+			{ServiceID: groveshop.ServicePayment, Name: "Payment", Kind: "payment", Register: registerRuntimePayment,
+				Handlers: []groveruntime.HandlerSpec{{Method: groveshop.MethodCharge, Name: "Charge"}}},
+			{ServiceID: groveshop.ServiceShipping, Name: "Shipping", Kind: "shipping", Register: registerRuntimeShipping,
+				Handlers: []groveruntime.HandlerSpec{{Method: groveshop.MethodArrangeShipping, Name: "Arrange"}}},
 			{ServiceID: groveshop.ServiceWeb, Name: "Web", Kind: "web", HTTPHandler: runtimeWebHandler},
+			{ServiceID: groveshop.ServiceLoadGen, Name: "LoadGen", Kind: "loadgen", Register: registerRuntimeLoadGen,
+				Handlers: []groveruntime.HandlerSpec{{Method: groveshop.MethodLoad, Name: "Load", Exclusive: true, Capability: groveshop.LoadGenCapability}}},
 		},
 		RegisterActions: groveshop.RegisterActions,
 		IntegrityAction: groveshop.ActionVerifyOrders,
@@ -51,17 +58,9 @@ func RuntimeDefinition() groveruntime.Definition {
 				{ServiceID: groveshop.ServiceOrders, NodeID: "node-1"},
 				{ServiceID: groveshop.ServiceInventory, NodeID: "node-2"},
 				{ServiceID: groveshop.ServiceWeb, NodeID: "node-1"},
+				{ServiceID: groveshop.ServiceLoadGen, NodeID: "node-1"},
 			},
-			StartupComponents: []groveruntime.ScenarioPlacement{
-				{ServiceID: groveshop.ServiceOrders, NodeID: "node-1", Options: []string{"distributed"}},
-				{ServiceID: groveshop.ServiceInventory, NodeID: "node-1"},
-				{ServiceID: groveshop.ServicePayment, NodeID: "node-1"},
-				{ServiceID: groveshop.ServiceShipping, NodeID: "node-1"},
-				{ServiceID: groveshop.ServiceWeb, NodeID: "node-1"},
-				{ServiceID: groveshop.ServiceInventory, NodeID: "node-2"},
-				{ServiceID: groveshop.ServiceShipping, NodeID: "node-2"},
-				{ServiceID: groveshop.ServicePayment, NodeID: "node-3"},
-			},
+			StartupComponents: startupComponents(),
 			DebugPlacements: []groveruntime.ScenarioPlacement{
 				{ServiceID: groveshop.ServiceWeb, NodeID: "node-1"},
 				{ServiceID: groveshop.ServiceOrders, NodeID: "node-2", Options: []string{"distributed"}},
@@ -76,6 +75,28 @@ func RuntimeDefinition() groveruntime.Definition {
 			InvalidConfig:     runtimeInvalidConfiguration,
 		},
 	}
+}
+
+// startupComponents hosts every processing component on every node, so each
+// node that joins adds a placement for every ordinary handler. Web stays on
+// node-1 as the ingress, and LoadGen competes for its exclusive capability from
+// every node.
+func startupComponents() []groveruntime.ScenarioPlacement {
+	var placements []groveruntime.ScenarioPlacement
+	for _, nodeID := range []string{"node-1", "node-2", "node-3"} {
+		label := "node=" + nodeID
+		placements = append(placements,
+			groveruntime.ScenarioPlacement{ServiceID: groveshop.ServiceOrders, NodeID: nodeID, Options: []string{"distributed", label}},
+			groveruntime.ScenarioPlacement{ServiceID: groveshop.ServiceInventory, NodeID: nodeID, Options: []string{label}},
+			groveruntime.ScenarioPlacement{ServiceID: groveshop.ServicePayment, NodeID: nodeID, Options: []string{label}},
+			groveruntime.ScenarioPlacement{ServiceID: groveshop.ServiceShipping, NodeID: nodeID, Options: []string{label}},
+			groveruntime.ScenarioPlacement{ServiceID: groveshop.ServiceLoadGen, NodeID: nodeID, Options: []string{label}},
+		)
+		if nodeID == "node-1" {
+			placements = append(placements, groveruntime.ScenarioPlacement{ServiceID: groveshop.ServiceWeb, NodeID: nodeID})
+		}
+	}
+	return placements
 }
 
 func runtimeDefaultConfiguration() (groveruntime.Configuration, error) {
@@ -129,6 +150,17 @@ func runtimeConfigurationFailure(err error) (string, string) {
 	return "", err.Error()
 }
 
+// nodeOption returns the "node=<id>" label the startup layout gives every
+// component, or "unknown".
+func nodeOption(options []string) string {
+	for _, option := range options {
+		if id, ok := strings.CutPrefix(option, "node="); ok {
+			return id
+		}
+	}
+	return "unknown"
+}
+
 func registerRuntimeOrders(ctx groveruntime.ComponentContext) error {
 	var orders *groveshop.Orders
 	if ctx.Client == nil {
@@ -138,7 +170,25 @@ func registerRuntimeOrders(ctx groveruntime.ComponentContext) error {
 	} else {
 		orders = groveshop.NewGroveOrders(ctx.Client, &groveshop.Payment{}, &groveshop.Shipping{})
 	}
+	orders.Node = nodeOption(ctx.Options)
 	return groveshop.RegisterOrders(ctx.Registry, orders)
+}
+
+// registerRuntimeLoadGen hosts the single cluster-wide load generator. It
+// drives orders through the same Orders service the Web component calls.
+func registerRuntimeLoadGen(ctx groveruntime.ComponentContext) error {
+	if ctx.Client == nil {
+		return errors.New("Grove Shop load generator requires a Grove client")
+	}
+	generator := groveshop.NewLoadGenerator(nodeOption(ctx.Options), func(callCtx context.Context, request groveshop.CreateOrderRequest) (groveshop.Order, error) {
+		return grove.Call[groveshop.CreateOrderRequest, groveshop.Order](callCtx, ctx.Client, groveshop.ServiceOrders, groveshop.MethodCreateOrder, request)
+	})
+	// Every node hosting LoadGen competes for the exclusive capability; only
+	// the owner generates load, and ownership moves if its node dies.
+	generator.SetEnabled(false)
+	go generator.Run(ctx.Context)
+	go generator.RunOwned(ctx.Context)
+	return groveshop.RegisterLoadGen(ctx.Context, ctx.Registry, generator)
 }
 
 func registerRuntimeInventory(ctx groveruntime.ComponentContext) error {
@@ -146,15 +196,17 @@ func registerRuntimeInventory(ctx groveruntime.ComponentContext) error {
 	if !ok {
 		return errors.New("Grove Shop runtime configuration has an unexpected type")
 	}
-	return groveshop.RegisterInventory(ctx.Registry, groveshop.NewInventory(configuration.Inventory.ReservationBuffer))
+	inventory := groveshop.NewInventory(configuration.Inventory.ReservationBuffer)
+	inventory.Node = nodeOption(ctx.Options)
+	return groveshop.RegisterInventory(ctx.Registry, inventory)
 }
 
 func registerRuntimePayment(ctx groveruntime.ComponentContext) error {
-	return groveshop.RegisterPayment(ctx.Registry, &groveshop.Payment{})
+	return groveshop.RegisterPayment(ctx.Registry, &groveshop.Payment{Node: nodeOption(ctx.Options)})
 }
 
 func registerRuntimeShipping(ctx groveruntime.ComponentContext) error {
-	return groveshop.RegisterShipping(ctx.Registry, &groveshop.Shipping{})
+	return groveshop.RegisterShipping(ctx.Registry, &groveshop.Shipping{Node: nodeOption(ctx.Options)})
 }
 
 func runtimeWebHandler(ctx groveruntime.ComponentContext) (http.Handler, error) {
@@ -172,7 +224,20 @@ func runtimeWebHandler(ctx groveruntime.ComponentContext) (http.Handler, error) 
 	createOrder := func(callCtx context.Context, request groveshop.CreateOrderRequest) (groveshop.Order, error) {
 		return grove.Call[groveshop.CreateOrderRequest, groveshop.Order](callCtx, ctx.Client, groveshop.ServiceOrders, groveshop.MethodCreateOrder, request)
 	}
-	return groveshop.WebHandlerWithRuntime(configuration, ctx.ConfigDigest, readStatus, createOrder), nil
+	callLoad := func(callCtx context.Context, request groveshop.LoadRequest) (groveshop.LoadSnapshot, error) {
+		return grove.Call[groveshop.LoadRequest, groveshop.LoadSnapshot](callCtx, ctx.Client, groveshop.ServiceLoadGen, groveshop.MethodLoad, request)
+	}
+	load := groveshop.LoadClient{
+		Set: func(callCtx context.Context, running bool) (groveshop.LoadSnapshot, error) {
+			return callLoad(callCtx, groveshop.LoadRequest{Apply: true, Running: running})
+		},
+		Snapshot: func(callCtx context.Context, since int64) (groveshop.LoadSnapshot, error) {
+			return callLoad(callCtx, groveshop.LoadRequest{SinceUnixMilli: since})
+		},
+	}
+	monitor := groveshop.NewLoadMonitor(load, readStatus)
+	go monitor.Run(ctx.Context)
+	return groveshop.WebHandlerWithLoad(configuration, ctx.ConfigDigest, readStatus, createOrder, monitor), nil
 }
 
 func groveShopStatus(status groveruntime.ClusterStatus) groveshop.ClusterStatusView {

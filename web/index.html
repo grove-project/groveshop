@@ -22,12 +22,48 @@
     .degraded, .failed { color: #a13b2a; }
     .muted { color: #617269; }
     code { overflow-wrap: anywhere; }
+    .demo { grid-column: 1 / -1; min-height: 0; }
+    .demo-head { display: flex; align-items: center; gap: 1rem; flex-wrap: wrap; }
+    .demo-head h2 { margin: 0; }
+    #load-toggle { min-width: 8rem; font-weight: 700; }
+    #load-toggle.on { background: #a13b2a; border-color: #a13b2a; }
+    .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(8.5rem, 1fr)); gap: 0.5rem; margin: 1rem 0; }
+    .tile { padding: 0.6rem; border-radius: 0.5rem; background: #eef4f0; }
+    .tile span { display: block; font-size: 0.75rem; color: #617269; }
+    .tile b { font-size: 1.35rem; font-variant-numeric: tabular-nums; }
+    #timeline { width: 100%; height: 16rem; display: block; }
+    #events { max-height: 9rem; overflow: auto; font-size: 0.9rem; }
+    .ev-node_joined { color: #176338; } .ev-node_lost { color: #a13b2a; }
+    .ev-generator_relocated { color: #8a5a00; } .ev-recovered { color: #1f5f8b; }
     @media (max-width: 48rem) { main { grid-template-columns: 1fr; padding: 1rem; } }
     @media (max-width: 32rem) { form { grid-template-columns: 1fr; } }
   </style>
 </head>
 <body>
   <main>
+    <section class="demo" aria-labelledby="demo-heading">
+      <div class="demo-head">
+        <h2 id="demo-heading">Load &amp; Capacity Demo</h2>
+        <button id="load-toggle" type="button">Load OFF</button>
+        <span id="load-state" class="muted">Connecting…</span>
+      </div>
+      <div class="tiles">
+        <div class="tile"><span>Nodes</span><b id="m-nodes">–</b></div>
+        <div class="tile"><span>Orders / sec</span><b id="m-throughput">–</b></div>
+        <div class="tile"><span>p50 latency</span><b id="m-p50">–</b></div>
+        <div class="tile"><span>p95 latency</span><b id="m-p95">–</b></div>
+        <div class="tile"><span>In flight</span><b id="m-inflight">–</b></div>
+        <div class="tile"><span>Generated load</span><b id="m-concurrency">–</b></div>
+        <div class="tile"><span>Completed</span><b id="m-completed">–</b></div>
+        <div class="tile"><span>Failed</span><b id="m-failed">–</b></div>
+        <div class="tile"><span>Completion rate</span><b id="m-completion">–</b></div>
+        <div class="tile"><span>Last recovery</span><b id="m-recovery">–</b></div>
+        <div class="tile"><span>Generator on</span><b id="m-generator">–</b></div>
+      </div>
+      <div class="tile"><span>Completed orders by node (per stage)</span><ul id="distribution"></ul></div>
+      <canvas id="timeline" aria-label="Orders per second and p95 latency over time"></canvas>
+      <ul id="events"></ul>
+    </section>
     <section aria-labelledby="orders-heading">
       <h1 id="orders-heading">Grove Shop Orders</h1>
       <p>Create and inspect orders through the Grove-managed application.</p>
@@ -122,7 +158,106 @@
       }
     });
 
+    const loadIntervalMilliseconds = 1000;
+    const eventColors = {node_joined: "#176338", node_lost: "#a13b2a", generator_relocated: "#8a5a00", recovered: "#1f5f8b"};
+    let loadDesired = false;
+
+    const fmt = (value, digits = 0) => Number(value).toFixed(digits);
+
+    function drawTimeline(view) {
+      const canvas = document.querySelector("#timeline");
+      const scale = window.devicePixelRatio || 1;
+      const width = canvas.clientWidth, height = canvas.clientHeight;
+      canvas.width = width * scale; canvas.height = height * scale;
+      const g = canvas.getContext("2d");
+      g.scale(scale, scale);
+      g.clearRect(0, 0, width, height);
+      const points = view.history;
+      if (points.length < 2) return;
+      const left = 44, right = 44, top = 10, bottom = 20;
+      const t0 = points[0].t, t1 = points[points.length - 1].t;
+      const x = t => left + (t - t0) / Math.max(1, t1 - t0) * (width - left - right);
+      const maxThroughput = Math.max(1, ...points.map(p => p.throughput)) * 1.1;
+      const maxLatency = Math.max(1, ...points.map(p => p.p95_ms)) * 1.1;
+      const yThroughput = v => top + (1 - v / maxThroughput) * (height - top - bottom);
+      const yLatency = v => top + (1 - v / maxLatency) * (height - top - bottom);
+      g.font = "11px system-ui"; g.lineWidth = 1;
+      g.strokeStyle = "#cad8cf"; g.strokeRect(left, top, width - left - right, height - top - bottom);
+      g.fillStyle = "#235c3d"; g.textAlign = "right";
+      g.fillText(fmt(maxThroughput) + " /s", left - 4, top + 8);
+      g.fillStyle = "#8a5a00"; g.textAlign = "left";
+      g.fillText(fmt(maxLatency) + " ms", width - right + 4, top + 8);
+      const line = (color, y, key) => {
+        g.beginPath(); g.strokeStyle = color; g.lineWidth = 2;
+        points.forEach((p, i) => i ? g.lineTo(x(p.t), y(p[key])) : g.moveTo(x(p.t), y(p[key])));
+        g.stroke();
+      };
+      line("#8a5a00", yLatency, "p95_ms");
+      line("#235c3d", yThroughput, "throughput");
+      g.lineWidth = 1; g.textAlign = "center";
+      let lastNodes = points[0].nodes;
+      points.forEach(p => {
+        if (p.nodes !== lastNodes) { lastNodes = p.nodes; g.fillStyle = "#617269"; g.fillText(`${p.nodes} node${p.nodes === 1 ? "" : "s"}`, x(p.t), height - 6); }
+      });
+      view.events.filter(e => e.t >= t0 && e.t <= t1).forEach(e => {
+        g.strokeStyle = g.fillStyle = eventColors[e.kind] || "#617269";
+        g.setLineDash([4, 3]); g.beginPath(); g.moveTo(x(e.t), top); g.lineTo(x(e.t), height - bottom); g.stroke(); g.setLineDash([]);
+        g.fillText(e.kind.replace("_", " "), Math.min(Math.max(x(e.t), left + 30), width - right - 30), top + 20);
+      });
+    }
+
+    async function refreshLoad() {
+      const state = document.querySelector("#load-state");
+      try {
+        const response = await fetch("/api/load", {cache: "no-store"});
+        if (!response.ok) throw new Error(await response.text());
+        const view = await response.json();
+        const c = view.current;
+        loadDesired = view.desired;
+        const toggle = document.querySelector("#load-toggle");
+        toggle.textContent = view.desired ? "Load ON" : "Load OFF";
+        toggle.className = view.desired ? "on" : "";
+        state.textContent = !view.generator_available ? "Generator relocating…" : c.running ? "Generator running" : "Generator stopped";
+        state.className = view.generator_available ? "muted" : "degraded";
+        const set = (id, value) => { document.querySelector(id).textContent = value; };
+        set("#m-nodes", view.nodes);
+        set("#m-throughput", fmt(c.throughput, 1));
+        set("#m-p50", fmt(c.p50_ms, 1) + " ms");
+        set("#m-p95", fmt(c.p95_ms, 1) + " ms");
+        set("#m-inflight", c.in_flight);
+        set("#m-concurrency", c.concurrency);
+        set("#m-completed", c.completed);
+        set("#m-failed", c.failed);
+        set("#m-completion", c.completed + c.failed ? fmt(view.completion_rate * 100, 2) + "%" : "–");
+        set("#m-recovery", view.recovery_ms ? fmt(view.recovery_ms / 1000, 1) + " s" : "–");
+        set("#m-generator", view.generator_node || "–");
+        textList(document.querySelector("#distribution"), Object.entries(c.distribution || {}).sort().map(([stage, nodes]) => {
+          const total = Object.values(nodes).reduce((a, b) => a + b, 0) || 1;
+          return `${stage}: ` + Object.entries(nodes).sort().map(([node, n]) => `${node} ${fmt(n / total * 100)}% (${n})`).join(" · ");
+        }));
+        textList(document.querySelector("#events"), view.events.slice().reverse().map(e =>
+          `${new Date(e.t).toLocaleTimeString()} · ${e.message}`));
+        document.querySelectorAll("#events li").forEach((li, i) => { li.className = "ev-" + view.events[view.events.length - 1 - i].kind; });
+        drawTimeline(view);
+      } catch (error) {
+        state.textContent = `Load status unavailable: ${error.message}`;
+        state.className = "failed";
+      }
+    }
+
+    document.querySelector("#load-toggle").addEventListener("click", async () => {
+      const response = await fetch("/api/load", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({running: !loadDesired})
+      });
+      if (!response.ok) document.querySelector("#load-state").textContent = await response.text();
+      refreshLoad();
+    });
+
     refreshStatus();
+    refreshLoad();
+    setInterval(refreshLoad, loadIntervalMilliseconds);
     refreshOrders().catch(() => {});
     setInterval(refreshStatus, statusIntervalMilliseconds);
   </script>
