@@ -9,7 +9,6 @@ import (
 	"io"
 	"net/http"
 	"slices"
-	"strings"
 
 	"github.com/grove-project/grove"
 	"github.com/grove-project/groveshop"
@@ -51,23 +50,11 @@ func RuntimeDefinition() groveruntime.Definition {
 		},
 		RegisterActions: groveshop.RegisterActions,
 		IntegrityAction: groveshop.ActionVerifyOrders,
+		// The runtime places every component: it hosts ordinary handlers on
+		// every node that starts or joins, whatever its ID, and places Web's
+		// HTTP ingress wherever nothing else already serves its address. Grove
+		// Shop declares no placement (see grove#34).
 		Scenario: &groveruntime.Scenario{
-			NodeCount:      3,
-			DebugNodeCount: 5,
-			InitialPlacements: []groveruntime.ScenarioPlacement{
-				{ServiceID: groveshop.ServiceOrders, NodeID: "node-1"},
-				{ServiceID: groveshop.ServiceInventory, NodeID: "node-2"},
-				{ServiceID: groveshop.ServiceWeb, NodeID: "node-1"},
-				{ServiceID: groveshop.ServiceLoadGen, NodeID: "node-1"},
-			},
-			StartupComponents: startupComponents(),
-			DebugPlacements: []groveruntime.ScenarioPlacement{
-				{ServiceID: groveshop.ServiceWeb, NodeID: "node-1"},
-				{ServiceID: groveshop.ServiceOrders, NodeID: "node-2", Options: []string{"distributed"}},
-				{ServiceID: groveshop.ServiceInventory, NodeID: "node-3"},
-				{ServiceID: groveshop.ServicePayment, NodeID: "node-4"},
-				{ServiceID: groveshop.ServiceShipping, NodeID: "node-5"},
-			},
 			RecoveryServiceID: groveshop.ServiceInventory,
 			Probe:             runtimeOrderProbe,
 			ProbeHealthy:      runtimeOrderHealthy,
@@ -75,28 +62,6 @@ func RuntimeDefinition() groveruntime.Definition {
 			InvalidConfig:     runtimeInvalidConfiguration,
 		},
 	}
-}
-
-// startupComponents hosts every processing component on every node, so each
-// node that joins adds a placement for every ordinary handler. Web stays on
-// node-1 as the ingress, and LoadGen competes for its exclusive capability from
-// every node.
-func startupComponents() []groveruntime.ScenarioPlacement {
-	var placements []groveruntime.ScenarioPlacement
-	for _, nodeID := range []string{"node-1", "node-2", "node-3"} {
-		label := "node=" + nodeID
-		placements = append(placements,
-			groveruntime.ScenarioPlacement{ServiceID: groveshop.ServiceOrders, NodeID: nodeID, Options: []string{"distributed", label}},
-			groveruntime.ScenarioPlacement{ServiceID: groveshop.ServiceInventory, NodeID: nodeID, Options: []string{label}},
-			groveruntime.ScenarioPlacement{ServiceID: groveshop.ServicePayment, NodeID: nodeID, Options: []string{label}},
-			groveruntime.ScenarioPlacement{ServiceID: groveshop.ServiceShipping, NodeID: nodeID, Options: []string{label}},
-			groveruntime.ScenarioPlacement{ServiceID: groveshop.ServiceLoadGen, NodeID: nodeID, Options: []string{label}},
-		)
-		if nodeID == "node-1" {
-			placements = append(placements, groveruntime.ScenarioPlacement{ServiceID: groveshop.ServiceWeb, NodeID: nodeID})
-		}
-	}
-	return placements
 }
 
 func runtimeDefaultConfiguration() (groveruntime.Configuration, error) {
@@ -150,27 +115,18 @@ func runtimeConfigurationFailure(err error) (string, string) {
 	return "", err.Error()
 }
 
-// nodeOption returns the "node=<id>" label the startup layout gives every
-// component, or "unknown".
-func nodeOption(options []string) string {
-	for _, option := range options {
-		if id, ok := strings.CutPrefix(option, "node="); ok {
-			return id
-		}
-	}
-	return "unknown"
-}
-
+// registerRuntimeOrders routes every downstream call through Grove: with
+// every node now hosting Inventory, Payment and Shipping as ordinary
+// handlers, a call is placed and balanced the same way regardless of which
+// node happens to also host Orders.
 func registerRuntimeOrders(ctx groveruntime.ComponentContext) error {
 	var orders *groveshop.Orders
 	if ctx.Client == nil {
 		orders = groveshop.NewOrders(&groveshop.Inventory{}, &groveshop.Payment{}, &groveshop.Shipping{})
-	} else if slices.Contains(ctx.Options, "distributed") {
-		orders = groveshop.NewDistributedOrders(ctx.Client)
 	} else {
-		orders = groveshop.NewGroveOrders(ctx.Client, &groveshop.Payment{}, &groveshop.Shipping{})
+		orders = groveshop.NewDistributedOrders(ctx.Client)
 	}
-	orders.Node = nodeOption(ctx.Options)
+	orders.Node = ctx.NodeID
 	return groveshop.RegisterOrders(ctx.Registry, orders)
 }
 
@@ -180,7 +136,7 @@ func registerRuntimeLoadGen(ctx groveruntime.ComponentContext) error {
 	if ctx.Client == nil {
 		return errors.New("Grove Shop load generator requires a Grove client")
 	}
-	generator := groveshop.NewLoadGenerator(nodeOption(ctx.Options), func(callCtx context.Context, request groveshop.CreateOrderRequest) (groveshop.Order, error) {
+	generator := groveshop.NewLoadGenerator(ctx.NodeID, func(callCtx context.Context, request groveshop.CreateOrderRequest) (groveshop.Order, error) {
 		return grove.Call[groveshop.CreateOrderRequest, groveshop.Order](callCtx, ctx.Client, groveshop.ServiceOrders, groveshop.MethodCreateOrder, request)
 	})
 	// Every node hosting LoadGen competes for the exclusive capability; only
@@ -197,16 +153,16 @@ func registerRuntimeInventory(ctx groveruntime.ComponentContext) error {
 		return errors.New("Grove Shop runtime configuration has an unexpected type")
 	}
 	inventory := groveshop.NewInventory(configuration.Inventory.ReservationBuffer)
-	inventory.Node = nodeOption(ctx.Options)
+	inventory.Node = ctx.NodeID
 	return groveshop.RegisterInventory(ctx.Registry, inventory)
 }
 
 func registerRuntimePayment(ctx groveruntime.ComponentContext) error {
-	return groveshop.RegisterPayment(ctx.Registry, &groveshop.Payment{Node: nodeOption(ctx.Options)})
+	return groveshop.RegisterPayment(ctx.Registry, &groveshop.Payment{Node: ctx.NodeID})
 }
 
 func registerRuntimeShipping(ctx groveruntime.ComponentContext) error {
-	return groveshop.RegisterShipping(ctx.Registry, &groveshop.Shipping{Node: nodeOption(ctx.Options)})
+	return groveshop.RegisterShipping(ctx.Registry, &groveshop.Shipping{Node: ctx.NodeID})
 }
 
 func runtimeWebHandler(ctx groveruntime.ComponentContext) (http.Handler, error) {
