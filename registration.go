@@ -18,6 +18,8 @@ const (
 	ServiceShipping grove.ServiceID = 4
 	// ServiceWeb identifies the Grove Shop Web component.
 	ServiceWeb grove.ServiceID = 5
+	// ServiceLoadGen identifies the cluster-wide Grove Shop load generator.
+	ServiceLoadGen grove.ServiceID = 6
 )
 
 const (
@@ -29,6 +31,8 @@ const (
 	MethodCharge grove.MethodID = 1
 	// MethodArrangeShipping identifies Shipping.Arrange.
 	MethodArrangeShipping grove.MethodID = 1
+	// MethodLoad identifies the exclusive LoadGenerator handler.
+	MethodLoad grove.MethodID = 1
 )
 
 var (
@@ -138,6 +142,41 @@ func RegisterShipping(registry *grove.Registry, shipping *Shipping) error {
 				return nil, err
 			}
 			return grove.Encode(response)
+		},
+	)
+}
+
+// ErrNotLoadOwner is returned when a call reaches a load generator that does
+// not currently own the exclusive capability.
+var ErrNotLoadOwner = errors.New("load generator is not the current owner")
+
+// RegisterLoadGen associates the exclusive load-generator handler with the
+// Grove Shop IDs. Every node hosting LoadGen registers it; Grove routes calls
+// only to the current capability owner.
+func RegisterLoadGen(ctx context.Context, registry *grove.Registry, generator *LoadGenerator) error {
+	if registry == nil {
+		return ErrRegistryRequired
+	}
+	if generator == nil {
+		return ErrServiceRequired
+	}
+	return registry.Register(
+		ServiceLoadGen,
+		MethodLoad,
+		func(_ context.Context, payload []byte) ([]byte, error) {
+			var req LoadRequest
+			if err := grove.Decode(payload, &req); err != nil {
+				return nil, err
+			}
+			if !generator.Enabled() {
+				return nil, ErrNotLoadOwner
+			}
+			if req.Apply {
+				// The generator outlives the request, so it runs on the
+				// component's context rather than the call's.
+				generator.SetRunning(ctx, req.Running)
+			}
+			return grove.Encode(generator.Snapshot(req.SinceUnixMilli))
 		},
 	)
 }

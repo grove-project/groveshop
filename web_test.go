@@ -154,3 +154,64 @@ func TestWebHandlerExposesReadOnlyRuntimeConfiguration(t *testing.T) {
 		t.Errorf("POST /grove/config status = %d; want %d", response.StatusCode, http.StatusMethodNotAllowed)
 	}
 }
+
+func TestWebHandlerLoadAPI(t *testing.T) {
+	var running bool
+	load := groveshop.LoadClient{
+		Set: func(_ context.Context, on bool) (groveshop.LoadSnapshot, error) {
+			running = on
+			return groveshop.LoadSnapshot{Instance: "a", Running: on}, nil
+		},
+		Snapshot: func(context.Context, int64) (groveshop.LoadSnapshot, error) {
+			return groveshop.LoadSnapshot{Instance: "a", Running: running}, nil
+		},
+	}
+	status := func(context.Context) (groveshop.ClusterStatusView, error) {
+		return groveshop.ClusterStatusView{Health: "healthy", Ready: true}, nil
+	}
+	monitor := groveshop.NewLoadMonitor(load, status)
+	server := httptest.NewServer(groveshop.WebHandlerWithLoad(groveshop.DefaultConfiguration(), "", status, nil, monitor))
+	defer server.Close()
+
+	response, err := http.Post(server.URL+"/api/load", "application/json", strings.NewReader(`{"running":true}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	var view groveshop.LoadView
+	if err := json.NewDecoder(response.Body).Decode(&view); err != nil {
+		t.Fatal(err)
+	}
+	if response.StatusCode != http.StatusOK || !view.Desired || !running || !view.Current.Running {
+		t.Fatalf("POST /api/load = %d %+v (running=%v)", response.StatusCode, view, running)
+	}
+
+	get, err := http.Get(server.URL + "/api/load")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer get.Body.Close()
+	if get.StatusCode != http.StatusOK {
+		t.Fatalf("GET /api/load status = %d", get.StatusCode)
+	}
+
+	bad, err := http.Post(server.URL+"/api/load", "application/json", strings.NewReader(`{"bogus":1}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	bad.Body.Close()
+	if bad.StatusCode != http.StatusBadRequest {
+		t.Fatalf("unknown field status = %d; want 400", bad.StatusCode)
+	}
+
+	disabled := httptest.NewServer(groveshop.WebHandler())
+	defer disabled.Close()
+	off, err := http.Get(disabled.URL + "/api/load")
+	if err != nil {
+		t.Fatal(err)
+	}
+	off.Body.Close()
+	if off.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("GET /api/load without monitor = %d; want 503", off.StatusCode)
+	}
+}

@@ -67,12 +67,16 @@ type Reservation struct {
 	SKU string
 	// Quantity is the number of reserved units.
 	Quantity int
+	// Node is the Grove node whose Inventory handled the request.
+	Node string
 }
 
 // Inventory reserves products for Grove Shop orders.
 type Inventory struct {
 	reservationBuffer int
 	configured        bool
+	// Node labels results with the hosting Grove node.
+	Node string
 }
 
 // NewInventory creates Inventory with an immutable reservation buffer from the
@@ -107,6 +111,7 @@ func (s *Inventory) Reserve(ctx context.Context, req ReserveRequest) (Reservatio
 		OrderID:  req.OrderID,
 		SKU:      req.SKU,
 		Quantity: req.Quantity,
+		Node:     s.Node,
 	}, nil
 }
 
@@ -126,10 +131,15 @@ type PaymentResult struct {
 	OrderID string
 	// AmountCents is the charged whole-cent amount.
 	AmountCents int
+	// Node is the Grove node whose Payment handled the request.
+	Node string
 }
 
 // Payment charges Grove Shop orders.
-type Payment struct{}
+type Payment struct {
+	// Node labels results with the hosting Grove node.
+	Node string
+}
 
 // Charge validates req and returns a deterministic successful payment.
 func (s *Payment) Charge(ctx context.Context, req ChargeRequest) (PaymentResult, error) {
@@ -146,6 +156,7 @@ func (s *Payment) Charge(ctx context.Context, req ChargeRequest) (PaymentResult,
 		ID:          "payment-" + req.OrderID,
 		OrderID:     req.OrderID,
 		AmountCents: req.AmountCents,
+		Node:        s.Node,
 	}, nil
 }
 
@@ -165,10 +176,15 @@ type Shipment struct {
 	OrderID string
 	// Address is the shipment destination.
 	Address string
+	// Node is the Grove node whose Shipping handled the request.
+	Node string
 }
 
 // Shipping arranges delivery for Grove Shop orders.
-type Shipping struct{}
+type Shipping struct {
+	// Node labels results with the hosting Grove node.
+	Node string
+}
 
 // Arrange validates req and returns a deterministic shipment.
 func (s *Shipping) Arrange(ctx context.Context, req ShippingRequest) (Shipment, error) {
@@ -185,6 +201,7 @@ func (s *Shipping) Arrange(ctx context.Context, req ShippingRequest) (Shipment, 
 		ID:      "shipment-" + req.OrderID,
 		OrderID: req.OrderID,
 		Address: req.Address,
+		Node:    s.Node,
 	}, nil
 }
 
@@ -224,7 +241,14 @@ type Order struct {
 	Payment PaymentResult
 	// Shipment is the shipping result.
 	Shipment Shipment
+	// Node is the Grove node whose Orders handled the workflow.
+	Node string
 }
+
+// MaxRetainedOrders bounds the completed orders Orders keeps for inspection so
+// sustained generated load cannot grow memory without limit. The oldest orders
+// are evicted first.
+const MaxRetainedOrders = 5000
 
 // Orders creates and retains Grove Shop orders using concrete business
 // services.
@@ -236,6 +260,8 @@ type Orders struct {
 	shipping  *Shipping
 	orders    map[string]Order
 	orderIDs  []string
+	// Node labels created orders with the hosting Grove node.
+	Node string
 }
 
 // NewDistributedOrders creates an Orders service that invokes Inventory,
@@ -278,23 +304,26 @@ func NewOrders(inventory *Inventory, payment *Payment, shipping *Shipping) *Orde
 	}
 }
 
-// Create runs the complete order workflow and retains the result for later
+// Create runs the complete order workflow without holding the service lock, so
+// concurrent orders overlap, and retains the result for later
 // inspection. Component errors are wrapped with their workflow operation.
 func (s *Orders) Create(ctx context.Context, req CreateOrderRequest) (Order, error) {
 	if err := ctx.Err(); err != nil {
 		return Order{}, err
 	}
 
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	if req.OrderID == "" {
 		return Order{}, ErrOrderIDRequired
 	}
-	if _, exists := s.orders[req.OrderID]; exists {
+	s.mu.RLock()
+	_, exists := s.orders[req.OrderID]
+	s.mu.RUnlock()
+	if exists {
 		return Order{}, fmt.Errorf("create order %q: %w", req.OrderID, ErrOrderExists)
 	}
 
 	order := Order{
+		Node:            s.Node,
 		ID:              req.OrderID,
 		SKU:             req.SKU,
 		Quantity:        req.Quantity,
@@ -372,8 +401,17 @@ func (s *Orders) Create(ctx context.Context, req CreateOrderRequest) (Order, err
 	advance(&order, OrderShipping)
 	advance(&order, OrderCompleted)
 
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, exists := s.orders[order.ID]; exists {
+		return Order{}, fmt.Errorf("create order %q: %w", order.ID, ErrOrderExists)
+	}
 	s.orders[order.ID] = cloneOrder(order)
 	s.orderIDs = append(s.orderIDs, order.ID)
+	if len(s.orderIDs) > MaxRetainedOrders {
+		delete(s.orders, s.orderIDs[0])
+		s.orderIDs = s.orderIDs[1:]
+	}
 	return cloneOrder(order), nil
 }
 
