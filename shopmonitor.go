@@ -66,15 +66,23 @@ func (m *ShopMonitor) View() ShopView {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	view := m.view
-	view.Events = slices.Clone(m.events)
-	view.History = slices.Clone(m.history)
-	if view.Events == nil {
-		view.Events = []ShopEvent{}
-	}
-	if view.History == nil {
-		view.History = []ShopHistoryPoint{}
-	}
+	view.Events = nonNil(slices.Clone(m.events))
+	view.History = nonNil(slices.Clone(m.history))
+	// Grove's gob codec turns the Shop's empty lists into nil; the browser
+	// reads them as lists, so hand it empty ones rather than null.
+	view.Nodes = nonNil(view.Nodes)
+	view.Inventory = nonNil(view.Inventory)
+	view.Unavailable = nonNil(view.Unavailable)
+	view.Suppliers = nonNil(view.Suppliers)
+	view.Orders = nonNil(view.Orders)
 	return view
+}
+
+func nonNil[T any](list []T) []T {
+	if list == nil {
+		return []T{}
+	}
+	return list
 }
 
 // Poll refreshes the view once.
