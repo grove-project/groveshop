@@ -41,7 +41,7 @@ func TestWebAsset(t *testing.T) {
 	if !strings.Contains(string(asset), "Grove Cluster Status") {
 		t.Errorf("embedded index = %q", asset)
 	}
-	for _, contract := range []string{`fetch("/grove/status"`, `fetch("/api/orders"`, "statusIntervalMilliseconds = 750"} {
+	for _, contract := range []string{`fetch("/grove/status"`, `fetch("/api/orders"`, `fetch("/api/shop"`, "statusIntervalMilliseconds = 750"} {
 		if !strings.Contains(string(asset), contract) {
 			t.Errorf("embedded index does not contain %q", contract)
 		}
@@ -155,63 +155,40 @@ func TestWebHandlerExposesReadOnlyRuntimeConfiguration(t *testing.T) {
 	}
 }
 
-func TestWebHandlerLoadAPI(t *testing.T) {
-	var running bool
-	load := groveshop.LoadClient{
-		Set: func(_ context.Context, on bool) (groveshop.LoadSnapshot, error) {
-			running = on
-			return groveshop.LoadSnapshot{Instance: "a", Running: on}, nil
-		},
-		Snapshot: func(context.Context, int64) (groveshop.LoadSnapshot, error) {
-			return groveshop.LoadSnapshot{Instance: "a", Running: running}, nil
-		},
-	}
-	status := func(context.Context) (groveshop.ClusterStatusView, error) {
-		return groveshop.ClusterStatusView{Health: "healthy", Ready: true}, nil
-	}
-	monitor := groveshop.NewLoadMonitor(load, status)
-	server := httptest.NewServer(groveshop.WebHandlerWithLoad(groveshop.DefaultConfiguration(), "", status, nil, monitor))
+func TestWebHandlerShopAPI(t *testing.T) {
+	shop := groveshop.NewShop(groveshop.ShopDeps{Node: "node-1"})
+	shop.Open()
+	monitor := groveshop.NewShopMonitor(func(_ context.Context, request groveshop.ShopRequest) (groveshop.ShopSnapshot, error) {
+		return shop.Snapshot(request.SinceEvent, request.SinceHistory), nil
+	})
+	monitor.Poll(t.Context())
+	server := httptest.NewServer(groveshop.WebHandlerWithShop(groveshop.DefaultConfiguration(), "", nil, nil, monitor))
 	defer server.Close()
 
-	response, err := http.Post(server.URL+"/api/load", "application/json", strings.NewReader(`{"running":true}`))
+	response, err := http.Get(server.URL + "/api/shop")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer response.Body.Close()
-	var view groveshop.LoadView
+	var view groveshop.ShopView
 	if err := json.NewDecoder(response.Body).Decode(&view); err != nil {
 		t.Fatal(err)
 	}
-	if response.StatusCode != http.StatusOK || !view.Desired || !running || !view.Current.Running {
-		t.Fatalf("POST /api/load = %d %+v (running=%v)", response.StatusCode, view, running)
+	if response.StatusCode != http.StatusOK || !view.Available || view.Node != "node-1" || len(view.Stations) != 3 || len(view.Inventory) == 0 {
+		t.Fatalf("GET /api/shop = %d %+v", response.StatusCode, view)
 	}
-
-	get, err := http.Get(server.URL + "/api/load")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer get.Body.Close()
-	if get.StatusCode != http.StatusOK {
-		t.Fatalf("GET /api/load status = %d", get.StatusCode)
-	}
-
-	bad, err := http.Post(server.URL+"/api/load", "application/json", strings.NewReader(`{"bogus":1}`))
-	if err != nil {
-		t.Fatal(err)
-	}
-	bad.Body.Close()
-	if bad.StatusCode != http.StatusBadRequest {
-		t.Fatalf("unknown field status = %d; want 400", bad.StatusCode)
+	if len(view.Events) == 0 || !strings.Contains(view.Events[0].Text, "open") {
+		t.Fatalf("GET /api/shop events = %+v; want the shop opening", view.Events)
 	}
 
 	disabled := httptest.NewServer(groveshop.WebHandler())
 	defer disabled.Close()
-	off, err := http.Get(disabled.URL + "/api/load")
+	off, err := http.Get(disabled.URL + "/api/shop")
 	if err != nil {
 		t.Fatal(err)
 	}
 	off.Body.Close()
 	if off.StatusCode != http.StatusServiceUnavailable {
-		t.Fatalf("GET /api/load without monitor = %d; want 503", off.StatusCode)
+		t.Fatalf("GET /api/shop without monitor = %d; want 503", off.StatusCode)
 	}
 }

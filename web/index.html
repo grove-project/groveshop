@@ -3,119 +3,534 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Grove Shop</title>
+  <title>Grove Coffee</title>
   <style>
-    :root { color-scheme: light; font-family: ui-sans-serif, system-ui, sans-serif; }
-    body { margin: 0; background: #f4f7f2; color: #183126; }
-    main { display: grid; grid-template-columns: 3fr 2fr; gap: 1rem; max-width: 72rem; margin: 0 auto; padding: 2rem; }
-    section { min-height: 16rem; padding: 1.5rem; border: 1px solid #cad8cf; border-radius: 0.75rem; background: white; }
-    h1, h2 { margin-top: 0; }
-    .progress { color: #38664d; font-weight: 600; }
-    form { display: grid; grid-template-columns: 2fr 1fr auto; gap: 0.5rem; margin: 1.25rem 0; }
-    input, button { padding: 0.7rem; border: 1px solid #9db4a6; border-radius: 0.4rem; font: inherit; }
-    button { border-color: #235c3d; background: #235c3d; color: white; cursor: pointer; }
-    ul { padding-left: 1.25rem; }
-    .status-grid { display: grid; gap: 0.75rem; }
-    .status-card { padding: 0.75rem; border-radius: 0.5rem; background: #eef4f0; }
+    :root {
+      color-scheme: light dark;
+      font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+      --bg: #f6f1ea; --panel: #fffdf9; --line: #e2d6c6; --ink: #2b1d14; --muted: #7a6858;
+      --accent: #7b4a26; --good: #2f7a4a; --warn: #b7791f; --bad: #b23b2b; --info: #2f5f8a;
+      --soft: #f1e8dc; --bar: #d9c7b1; --busy: #7b4a26; --idle: #cdbba5;
+      --q-cashier: #2f5f8a; --q-barista: #7b4a26; --q-kitchen: #2f7a4a; --q-wait: #b23b2b;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #17120e; --panel: #211a15; --line: #3a2e25; --ink: #f3e9de; --muted: #a8968a;
+        --accent: #d69a62; --good: #5fbf82; --warn: #e0a94a; --bad: #ec6a58; --info: #74a7d8;
+        --soft: #2b221b; --bar: #4a3b30; --busy: #d69a62; --idle: #5a4a3e;
+        --q-cashier: #74a7d8; --q-barista: #d69a62; --q-kitchen: #5fbf82; --q-wait: #ec6a58;
+      }
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--ink); }
+    header { display: flex; align-items: center; gap: 1rem; padding: 0.9rem 1.5rem; border-bottom: 1px solid var(--line); background: var(--panel); position: sticky; top: 0; z-index: 5; }
+    header h1 { font-size: 1.15rem; letter-spacing: 0.08em; margin: 0; }
+    header .spacer { flex: 1; }
+    #clock { font-variant-numeric: tabular-nums; color: var(--muted); }
+    #live { font-weight: 700; font-size: 0.85rem; }
+    #live.on { color: var(--good); } #live.off { color: var(--bad); }
+    nav button { font: inherit; font-size: 0.85rem; padding: 0.35rem 0.8rem; border: 1px solid var(--line); background: transparent; color: var(--ink); border-radius: 999px; cursor: pointer; }
+    nav button[aria-selected="true"] { background: var(--accent); border-color: var(--accent); color: var(--panel); }
+    main { max-width: 90rem; margin: 0 auto; padding: 1rem 1.5rem 2rem; }
+    .grid { display: grid; grid-template-columns: minmax(0, 2.2fr) minmax(18rem, 1fr); gap: 1rem; }
+    .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 0.8rem; padding: 1rem 1.1rem; min-width: 0; }
+    .panel h2 { font-size: 0.75rem; letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); margin: 0 0 0.7rem; display: flex; justify-content: space-between; gap: 0.5rem; }
+    .muted { color: var(--muted); }
+    .side { display: grid; gap: 1rem; align-content: start; }
+
+    /* Shop floor */
+    .floor { display: grid; gap: 0.6rem; }
+    .entrance { display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap; }
+    .crowd { flex: 1; min-height: 2rem; font-size: 1.15rem; line-height: 1.5rem; letter-spacing: 0.1rem; word-break: break-all; }
+    .badge { font-size: 0.75rem; font-weight: 700; padding: 0.15rem 0.5rem; border-radius: 999px; background: var(--soft); color: var(--muted); white-space: nowrap; }
+    .badge.hot { background: color-mix(in srgb, var(--bad) 18%, transparent); color: var(--bad); }
+    .badge.ok { background: color-mix(in srgb, var(--good) 16%, transparent); color: var(--good); }
+    .row { display: grid; gap: 0.8rem; }
+    .row.two { grid-template-columns: 1fr 1fr; }
+    .flow { text-align: center; color: var(--muted); font-size: 1rem; line-height: 1; }
+    .station { border: 1px solid var(--line); border-radius: 0.7rem; padding: 0.7rem 0.8rem; background: var(--soft); transition: border-color 0.4s, box-shadow 0.4s; }
+    .station.hot { border-color: var(--bad); box-shadow: 0 0 0 2px color-mix(in srgb, var(--bad) 25%, transparent); }
+    .station-head { display: flex; justify-content: space-between; font-weight: 700; letter-spacing: 0.06em; font-size: 0.85rem; }
+    .staff { display: flex; flex-wrap: wrap; gap: 0.25rem; margin: 0.5rem 0 0.35rem; min-height: 2.1rem; }
+    .person { display: grid; justify-items: center; font-size: 1.25rem; line-height: 1.3rem; transition: opacity 0.3s, transform 0.3s; }
+    .person.idle { opacity: 0.38; }
+    .person.new { animation: pop 0.6s ease-out; }
+    .person i { font-style: normal; font-size: 0.55rem; color: var(--muted); letter-spacing: 0; }
+    @keyframes pop { from { transform: scale(0.2); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+    .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.3rem; font-size: 0.78rem; }
+    .stats b { display: block; font-size: 1.05rem; font-variant-numeric: tabular-nums; }
+    .stats span { color: var(--muted); }
+    .util { height: 0.4rem; background: var(--bar); border-radius: 999px; overflow: hidden; margin-top: 0.45rem; }
+    .util > div { height: 100%; background: var(--accent); transition: width 0.5s; }
+    .station.hot .util > div { background: var(--bad); }
+    .waiting { margin-top: 0.45rem; font-size: 0.95rem; letter-spacing: 0.05rem; min-height: 1.3rem; word-break: break-all; }
+    .pickup { display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap; }
+    .orders { display: grid; grid-template-columns: repeat(auto-fill, minmax(12.5rem, 1fr)); gap: 0.4rem; margin-top: 0.6rem; }
+    .order { border: 1px solid var(--line); border-radius: 0.5rem; padding: 0.35rem 0.5rem; font-size: 0.78rem; background: var(--panel); }
+    .order .id { font-weight: 700; margin-right: 0.3rem; }
+    .order .item { display: flex; align-items: center; gap: 0.35rem; margin-top: 0.2rem; }
+    .order .item .track { flex: 1; height: 0.3rem; background: var(--bar); border-radius: 999px; overflow: hidden; }
+    .order .item .track > div { height: 100%; background: var(--accent); }
+    .order .item.ready .track > div { background: var(--good); }
+    .order .note { color: var(--muted); font-size: 0.72rem; margin-top: 0.2rem; }
+
+    /* Side panels */
+    .metrics { display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem 1rem; }
+    .metric span { display: block; font-size: 0.72rem; color: var(--muted); }
+    .metric b { font-size: 1.3rem; font-variant-numeric: tabular-nums; }
+    .metric small { font-size: 0.75rem; margin-left: 0.25rem; }
+    .up { color: var(--bad); } .down { color: var(--good); }
+    .nodes { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-bottom: 0.4rem; }
+    .node { font-size: 0.8rem; padding: 0.2rem 0.55rem; border-radius: 999px; background: var(--soft); border: 1px solid var(--line); }
+    .node::before { content: "●"; color: var(--good); margin-right: 0.3rem; }
+    .node.lost { text-decoration: line-through; color: var(--muted); }
+    .node.lost::before { color: var(--bad); }
+    .stock { display: grid; grid-template-columns: 6.5rem 1fr 3.2rem; align-items: center; gap: 0.5rem; font-size: 0.82rem; margin: 0.3rem 0; }
+    .stock .bar { height: 0.55rem; background: var(--bar); border-radius: 999px; overflow: hidden; }
+    .stock .bar > div { height: 100%; background: var(--good); transition: width 0.6s; }
+    .stock.low .bar > div { background: var(--warn); } .stock.critical .bar > div, .stock.out .bar > div { background: var(--bad); }
+    .stock .pct { text-align: right; font-variant-numeric: tabular-nums; }
+    .stock-note { grid-column: 1 / -1; font-size: 0.72rem; color: var(--muted); margin-top: -0.2rem; }
+    .stock.low .pct, .stock.critical .pct, .stock.out .pct { color: var(--bad); font-weight: 700; }
+    #unavailable { font-size: 0.8rem; color: var(--bad); margin-top: 0.4rem; }
+    .supplier { font-size: 0.82rem; padding: 0.35rem 0; border-top: 1px dashed var(--line); }
+    .supplier:first-child { border-top: 0; }
+    .supplier .late { color: var(--warn); font-weight: 700; }
+
+    /* Trends + activity */
+    .bottom { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); gap: 1rem; margin-top: 1rem; }
+    canvas { width: 100%; height: 13rem; display: block; }
+    .legend { display: flex; gap: 1rem; flex-wrap: wrap; font-size: 0.75rem; color: var(--muted); margin-top: 0.3rem; }
+    .legend i { display: inline-block; width: 1rem; height: 0; border-top: 3px solid; vertical-align: middle; margin-right: 0.3rem; }
+    #activity { list-style: none; margin: 0; padding: 0; max-height: 17rem; overflow: auto; font-size: 0.82rem; }
+    #activity li { display: grid; grid-template-columns: 4.6rem minmax(1.6rem, auto) 1fr; gap: 0.2rem; padding: 0.12rem 0; }
+    #activity li > span:nth-child(2) { white-space: nowrap; }
+    #activity li time { color: var(--muted); font-variant-numeric: tabular-nums; }
+    #activity li.quiet { color: var(--muted); }
+    #activity li.notice { font-weight: 600; }
+    #activity li.good { color: var(--good); font-weight: 600; }
+    #activity li.alert { color: var(--bad); font-weight: 700; }
+    label.toggle { font-size: 0.72rem; text-transform: none; letter-spacing: 0; font-weight: 400; }
+
+    /* Toasts */
+    #toasts { position: fixed; right: 1.2rem; top: 4.5rem; display: grid; gap: 0.6rem; z-index: 10; }
+    .toast { background: var(--panel); border: 1px solid var(--line); border-left: 5px solid var(--good); border-radius: 0.6rem; padding: 0.7rem 1rem; min-width: 16rem; box-shadow: 0 6px 24px rgba(0,0,0,0.15); animation: slide 0.4s ease-out; }
+    .toast.alert { border-left-color: var(--bad); }
+    .toast.notice { border-left-color: var(--warn); }
+    .toast b { display: block; margin-bottom: 0.2rem; }
+    @keyframes slide { from { transform: translateX(120%); } to { transform: none; } }
+
+    /* Grove runtime tab */
+    #grove-view { display: none; }
+    .status-grid { display: grid; gap: 0.75rem; grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr)); }
+    .status-card { padding: 0.75rem; border-radius: 0.5rem; background: var(--soft); }
     .status-card strong { display: block; margin-bottom: 0.25rem; }
-    .healthy { color: #176338; }
-    .degraded, .failed { color: #a13b2a; }
-    .muted { color: #617269; }
+    .status-card ul { margin: 0; padding-left: 1.1rem; font-size: 0.85rem; }
+    .healthy { color: var(--good); } .degraded, .failed { color: var(--bad); }
+    form { display: flex; gap: 0.5rem; flex-wrap: wrap; margin: 0.5rem 0; }
+    input, form button { padding: 0.5rem 0.6rem; border: 1px solid var(--line); border-radius: 0.4rem; font: inherit; background: var(--panel); color: var(--ink); }
+    form button { background: var(--accent); color: var(--panel); border-color: var(--accent); cursor: pointer; }
     code { overflow-wrap: anywhere; }
-    .demo { grid-column: 1 / -1; min-height: 0; }
-    .demo-head { display: flex; align-items: center; gap: 1rem; flex-wrap: wrap; }
-    .demo-head h2 { margin: 0; }
-    #load-toggle { min-width: 8rem; font-weight: 700; }
-    #load-toggle.on { background: #a13b2a; border-color: #a13b2a; }
-    .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(8.5rem, 1fr)); gap: 0.5rem; margin: 1rem 0; }
-    .tile { padding: 0.6rem; border-radius: 0.5rem; background: #eef4f0; }
-    .tile span { display: block; font-size: 0.75rem; color: #617269; }
-    .tile b { font-size: 1.35rem; font-variant-numeric: tabular-nums; }
-    .legend { display: flex; gap: 1.25rem; flex-wrap: wrap; font-size: 0.85rem; margin: 0.25rem 0; }
-    .legend i { display: inline-block; width: 1.5rem; height: 0; border-top: 3px solid; vertical-align: middle; margin-right: 0.4rem; }
-    .legend .dashed { border-top: 2px dashed; }
-    #timeline { width: 100%; height: 16rem; display: block; }
-    #events { max-height: 9rem; overflow: auto; font-size: 0.9rem; }
-    .ev-node_joined { color: #176338; } .ev-node_lost { color: #a13b2a; }
-    .ev-generator_relocated { color: #8a5a00; } .ev-recovered { color: #1f5f8b; }
-    @media (max-width: 48rem) { main { grid-template-columns: 1fr; padding: 1rem; } }
-    @media (max-width: 32rem) { form { grid-template-columns: 1fr; } }
+
+    @media (max-width: 64rem) { .grid, .bottom { grid-template-columns: 1fr; } }
+    @media (max-width: 36rem) { main { padding: 0.75rem 1rem; } header { padding: 0.75rem 1rem; flex-wrap: wrap; } .row.two { grid-template-columns: 1fr; } .stats { grid-template-columns: repeat(2, 1fr); } }
   </style>
 </head>
 <body>
-  <main>
-    <section class="demo" aria-labelledby="demo-heading">
-      <div class="demo-head">
-        <h2 id="demo-heading">Load &amp; Capacity Demo</h2>
-        <button id="load-toggle" type="button">Load OFF</button>
-        <span id="load-state" class="muted">Connecting…</span>
-      </div>
-      <div class="tiles">
-        <div class="tile"><span>Nodes</span><b id="m-nodes">–</b></div>
-        <div class="tile"><span>Orders / sec</span><b id="m-throughput">–</b></div>
-        <div class="tile"><span>p50 latency</span><b id="m-p50">–</b></div>
-        <div class="tile"><span>p95 latency</span><b id="m-p95">–</b></div>
-        <div class="tile"><span>In flight</span><b id="m-inflight">–</b></div>
-        <div class="tile"><span>Generated load</span><b id="m-concurrency">–</b></div>
-        <div class="tile"><span>Completed</span><b id="m-completed">–</b></div>
-        <div class="tile"><span>Failed</span><b id="m-failed">–</b></div>
-        <div class="tile"><span>Completion rate</span><b id="m-completion">–</b></div>
-        <div class="tile"><span>Last recovery</span><b id="m-recovery">–</b></div>
-        <div class="tile"><span>Generator on</span><b id="m-generator">–</b></div>
-      </div>
-      <div class="tile"><span>Completed orders by node (per stage)</span><ul id="distribution"></ul></div>
-      <div class="legend" aria-hidden="true">
-        <span><i style="border-color:#235c3d"></i>Orders/sec (left axis)</span>
-        <span><i style="border-color:#8a5a00"></i>p95 latency, ms (right axis)</span>
-        <span><i class="dashed" style="border-color:#617269"></i>Cluster event</span>
-      </div>
-      <canvas id="timeline" aria-label="Orders per second and p95 latency over time"></canvas>
-      <ul id="events"></ul>
-    </section>
-    <section aria-labelledby="orders-heading">
-      <h1 id="orders-heading">Grove Shop Orders</h1>
-      <p>Create and inspect orders through the Grove-managed application.</p>
-      <p class="progress">Created → Reserved → Paid → Shipping → Completed</p>
-      <form id="order-form">
-        <input id="order-sku" name="sku" value="coffee-beans" aria-label="SKU" required>
-        <input id="order-quantity" name="quantity" type="number" value="1" min="1" aria-label="Quantity" required>
-        <button type="submit">Create order</button>
-      </form>
-      <p id="order-result" class="muted">No orders yet.</p>
-      <ul id="orders"></ul>
-    </section>
-    <section aria-labelledby="cluster-heading">
-      <h2 id="cluster-heading">Grove Cluster Status</h2>
-      <p id="cluster-summary" class="muted">Connecting to Grove…</p>
-      <div class="status-grid">
-        <div class="status-card"><strong>Nodes</strong><ul id="nodes"></ul></div>
-        <div class="status-card"><strong>Placement</strong><ul id="placements"></ul></div>
-        <div class="status-card"><strong>Deployment</strong><ul id="deployment"></ul></div>
-      </div>
-    </section>
-  </main>
-  <script>
-    const statusIntervalMilliseconds = 750;
+  <header>
+    <h1>☕ GROVE COFFEE</h1>
+    <nav aria-label="Views">
+      <button id="tab-shop" type="button" aria-selected="true">Coffee shop</button>
+      <button id="tab-grove" type="button" aria-selected="false">Grove runtime</button>
+    </nav>
+    <span class="spacer"></span>
+    <span id="clock">--:--:--</span>
+    <span id="live" class="off">● CONNECTING</span>
+  </header>
+  <div id="toasts" aria-live="polite"></div>
 
+  <main id="shop-view">
+    <div class="grid">
+      <section class="panel" aria-labelledby="floor-heading">
+        <h2 id="floor-heading"><span>Shop floor</span><span id="bottleneck" class="badge">–</span></h2>
+        <div class="floor">
+          <div class="entrance">
+            <strong>Customers</strong>
+            <div id="crowd" class="crowd" aria-label="Customers waiting to order"></div>
+            <span id="arrivals" class="badge">– / min</span>
+          </div>
+          <div class="flow">↓</div>
+          <div class="row" id="row-cashier"></div>
+          <div class="flow">↙ &nbsp; order fans out &nbsp; ↘</div>
+          <div class="row two" id="row-prep"></div>
+          <div class="flow">↘ &nbsp; waits for every item &nbsp; ↙</div>
+          <div class="station">
+            <div class="pickup">
+              <strong>📦 PICKUP</strong>
+              <div id="pickup" class="crowd"></div>
+              <span id="served-badge" class="badge ok">0 served</span>
+            </div>
+          </div>
+          <div id="orders" class="orders" aria-label="Active orders"></div>
+        </div>
+      </section>
+
+      <div class="side">
+        <section class="panel" aria-labelledby="state-heading">
+          <h2 id="state-heading">Live state</h2>
+          <div class="metrics">
+            <div class="metric"><span>Customers inside</span><b id="m-inside">–</b></div>
+            <div class="metric"><span>Active orders</span><b id="m-orders">–</b></div>
+            <div class="metric"><span>Avg wait</span><b id="m-wait">–</b><small id="m-wait-trend"></small></div>
+            <div class="metric"><span>Longest wait now</span><b id="m-longest">–</b></div>
+            <div class="metric"><span>Drinks / min</span><b id="m-drinks">–</b></div>
+            <div class="metric"><span>Food / min</span><b id="m-food">–</b></div>
+            <div class="metric"><span>Served</span><b id="m-served">–</b></div>
+            <div class="metric"><span>Left unhappy</span><b id="m-left">–</b></div>
+          </div>
+          <p class="muted" id="mix" style="font-size:0.78rem;margin:0.6rem 0 0"></p>
+        </section>
+
+        <section class="panel" aria-labelledby="grove-heading">
+          <h2 id="grove-heading"><span>Grove capacity</span><span id="staff-total" class="badge">–</span></h2>
+          <div id="node-list" class="nodes"></div>
+          <p class="muted" style="font-size:0.78rem;margin:0.2rem 0 0">
+            Every Grove node brings <b id="per-node">3</b> staff. The shop's shift manager puts them on the busiest station.
+            <span id="host"></span>
+          </p>
+        </section>
+
+        <section class="panel" aria-labelledby="inventory-heading">
+          <h2 id="inventory-heading">Inventory</h2>
+          <div id="inventory"></div>
+          <div id="unavailable"></div>
+        </section>
+
+        <section class="panel" aria-labelledby="supply-heading">
+          <h2 id="supply-heading">Supply</h2>
+          <div id="suppliers"></div>
+        </section>
+      </div>
+    </div>
+
+    <div class="bottom">
+      <section class="panel" aria-labelledby="trend-heading">
+        <h2 id="trend-heading"><span>Queues &amp; wait, last 10 minutes</span></h2>
+        <canvas id="trend" aria-label="Queue lengths and average wait over time"></canvas>
+        <div class="legend" aria-hidden="true">
+          <span><i style="border-color:var(--q-cashier)"></i>Cashier line</span>
+          <span><i style="border-color:var(--q-barista)"></i>Drink queue</span>
+          <span><i style="border-color:var(--q-kitchen)"></i>Food queue</span>
+          <span><i style="border-color:var(--q-wait);border-top-style:dashed"></i>Avg wait (right axis)</span>
+          <span>▲ node joined · ▼ node lost</span>
+        </div>
+      </section>
+      <section class="panel" aria-labelledby="activity-heading">
+        <h2 id="activity-heading"><span>Live activity</span>
+          <label class="toggle"><input id="show-routine" type="checkbox" checked> routine events</label></h2>
+        <ul id="activity"></ul>
+      </section>
+    </div>
+  </main>
+
+  <main id="grove-view">
+    <div class="grid">
+      <section class="panel" aria-labelledby="cluster-heading">
+        <h2 id="cluster-heading">Grove Cluster Status</h2>
+        <p id="cluster-summary" class="muted">Connecting to Grove…</p>
+        <div class="status-grid">
+          <div class="status-card"><strong>Nodes</strong><ul id="nodes"></ul></div>
+          <div class="status-card"><strong>Placement</strong><ul id="placements"></ul></div>
+          <div class="status-card"><strong>Deployment</strong><ul id="deployment"></ul></div>
+        </div>
+      </section>
+      <section class="panel" aria-labelledby="probe-heading">
+        <h2 id="probe-heading">Lifecycle probe order</h2>
+        <p class="muted" style="font-size:0.85rem">Grove's rollout and recovery checks place one order through Orders → Inventory → Payment → Shipping. You can place one by hand here.</p>
+        <form id="order-form">
+          <input id="order-sku" name="sku" value="coffee-beans" aria-label="SKU" required>
+          <input id="order-quantity" name="quantity" type="number" value="1" min="1" aria-label="Quantity" required style="width:5rem">
+          <button type="submit">Place probe order</button>
+        </form>
+        <p id="order-result" class="muted">No probe orders yet.</p>
+        <ul id="probe-orders" style="font-size:0.8rem"></ul>
+      </section>
+    </div>
+  </main>
+
+  <script>
+    const shopIntervalMilliseconds = 500;
+    const statusIntervalMilliseconds = 750;
+    const stationInfo = {
+      cashier: {title: "🧾 CASHIERS", token: "👤", queue: "in line"},
+      barista: {title: "☕ BARISTAS", token: "☕", queue: "drinks waiting"},
+      kitchen: {title: "🥪 KITCHEN", token: "🥪", queue: "items waiting"},
+    };
+    const nodeGlyphs = ["①", "②", "③", "④", "⑤", "⑥", "⑦", "⑧", "⑨"];
+    const $ = selector => document.querySelector(selector);
+    const pageOpened = Date.now();
+    let lastStaff = {};
+    let seenToast = 0;
+    let lastView = null;
+
+    function mmss(ms) {
+      const seconds = Math.max(0, Math.round(ms / 1000));
+      return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
+    }
+    function tokens(glyph, count, limit = 40) {
+      if (count <= 0) return "";
+      return glyph.repeat(Math.min(count, limit)) + (count > limit ? ` +${count - limit}` : "");
+    }
+    function el(tag, attrs = {}, ...children) {
+      const node = document.createElement(tag);
+      for (const [key, value] of Object.entries(attrs)) {
+        if (key === "class") node.className = value; else if (key === "style") node.style.cssText = value; else node.setAttribute(key, value);
+      }
+      node.append(...children.filter(child => child !== null && child !== undefined));
+      return node;
+    }
     function textList(element, values) {
-      element.replaceChildren(...values.map(value => {
-        const item = document.createElement("li");
-        item.textContent = value;
-        return item;
+      element.replaceChildren(...values.map(value => el("li", {}, value)));
+    }
+    function nodeGlyph(view, node) {
+      const index = view.nodes.indexOf(node);
+      return index >= 0 && index < nodeGlyphs.length ? nodeGlyphs[index] : "•";
+    }
+
+    function renderStation(view, station) {
+      const info = stationInfo[station.id];
+      const card = el("div", {class: "station" + (station.congested ? " hot" : ""), id: "station-" + station.id});
+      const status = station.congested ? "🔥 CONGESTED" : station.queue === 0 ? "✓" : "";
+      card.append(el("div", {class: "station-head"}, el("span", {}, info.title), el("span", {}, status)));
+      // Staff: each person is one Grove execution slot. Busy staff are solid;
+      // the small digit is the node that did most of this station's recent work.
+      const staff = el("div", {class: "staff", "aria-label": `${station.staff} staff, ${station.busy} busy`});
+      const nodesByWork = Object.entries(station.by_node || {}).sort((a, b) => b[1] - a[1]).map(([node]) => node);
+      const previous = lastStaff[station.id] ?? station.staff;
+      for (let i = 0; i < station.staff; i++) {
+        const node = nodesByWork.length ? nodesByWork[i % nodesByWork.length] : "";
+        const person = el("span", {class: "person" + (i < station.busy ? "" : " idle") + (i >= previous ? " new" : ""), title: node ? `work recently done on ${node}` : ""},
+          "🧑", el("i", {}, node ? nodeGlyph(view, node) : " "));
+        staff.append(person);
+      }
+      if (station.staff === 0) staff.append(el("span", {class: "muted"}, "no staff"));
+      lastStaff[station.id] = station.staff;
+      card.append(staff);
+      const stat = (label, value) => el("div", {}, el("span", {}, label), el("b", {}, value));
+      card.append(el("div", {class: "stats"},
+        stat("Busy", `${station.busy} / ${station.staff}`),
+        stat("Waiting", String(station.queue)),
+        stat("Oldest wait", station.queue ? mmss(station.oldest_wait_ms) : "–"),
+        stat("Utilization", `${Math.round(station.utilization * 100)}%`)));
+      const util = el("div", {class: "util"}, el("div", {style: `width:${Math.round(station.utilization * 100)}%`}));
+      card.append(util);
+      if (station.id !== "cashier") card.append(el("div", {class: "waiting", "aria-label": `${station.queue} ${info.queue}`}, tokens(info.token, station.queue)));
+      return card;
+    }
+
+    function renderOrder(order) {
+      const card = el("div", {class: "order"}, el("span", {class: "id"}, `#${order.id}`), el("span", {class: "muted"}, mmss(order.age_ms)));
+      const waitingFor = [];
+      for (const item of order.items) {
+        const pct = Math.round(item.progress * 100);
+        const label = item.state === "ready" ? "✓" : item.state === "preparing" ? `${pct}%` : "queued";
+        if (item.state !== "ready") waitingFor.push(item.name.toLowerCase());
+        card.append(el("div", {class: "item " + item.state},
+          el("span", {}, `${item.emoji} ${item.name}`),
+          el("div", {class: "track"}, el("div", {style: `width:${pct}%`})),
+          el("span", {class: "muted"}, label)));
+      }
+      if (order.stage === "pickup") card.append(el("div", {class: "note"}, "at pickup"));
+      else if (order.items.length > 1 && waitingFor.length && waitingFor.length < order.items.length) card.append(el("div", {class: "note"}, `waiting for ${waitingFor.join(", ")}`));
+      return card;
+    }
+
+    function trendArrow(history, key) {
+      if (history.length < 20) return "";
+      const now = history[history.length - 1][key], before = history[history.length - 20][key];
+      if (now > before * 1.15 + 500) return "↑";
+      if (now < before * 0.85 - 500) return "↓";
+      return "";
+    }
+
+    function renderShop(view) {
+      lastView = view;
+      $("#live").textContent = !view.available ? "● RECONNECTING" : view.paused ? "⏸ PAUSED" : "● LIVE";
+      $("#live").className = view.available && !view.paused ? "on" : "off";
+      if (!view.stations) return;
+      const byId = Object.fromEntries(view.stations.map(station => [station.id, station]));
+      const m = view.metrics;
+
+      $("#crowd").textContent = tokens("👤", byId.cashier?.queue ?? 0, 60) || "—";
+      $("#arrivals").textContent = `${Math.round(m.arrivals_min)} arrivals / min${m.rush ? " ↑ rush" : ""}`;
+      $("#arrivals").className = "badge" + (m.rush ? " hot" : "");
+      $("#row-cashier").replaceChildren(renderStation(view, byId.cashier));
+      $("#row-prep").replaceChildren(renderStation(view, byId.barista), renderStation(view, byId.kitchen));
+      const bottleneckNames = {cashier: "order intake", barista: "baristas", kitchen: "kitchen"};
+      $("#bottleneck").textContent = view.bottleneck ? `🔥 Bottleneck: ${bottleneckNames[view.bottleneck]}` : "✓ Flowing";
+      $("#bottleneck").className = "badge " + (view.bottleneck ? "hot" : "ok");
+
+      const atPickup = view.orders.filter(order => order.stage === "pickup");
+      $("#pickup").textContent = atPickup.length ? atPickup.map(order => order.items.map(item => item.emoji).join("")).join(" ") : "—";
+      $("#served-badge").textContent = `${m.served} served`;
+      const shown = view.orders.filter(order => order.stage !== "pickup").slice(0, 12);
+      $("#orders").replaceChildren(...shown.map(renderOrder));
+
+      $("#m-inside").textContent = m.customers_inside;
+      $("#m-orders").textContent = m.active_orders;
+      $("#m-wait").textContent = m.avg_wait_ms ? mmss(m.avg_wait_ms) : "–";
+      const waitTrend = trendArrow(view.history, "avg_wait_ms");
+      $("#m-wait-trend").textContent = waitTrend;
+      $("#m-wait-trend").className = waitTrend === "↑" ? "up" : "down";
+      $("#m-longest").textContent = m.customers_inside ? mmss(m.longest_wait_ms) : "–";
+      $("#m-drinks").textContent = Math.round(m.drinks_min);
+      $("#m-food").textContent = Math.round(m.food_min);
+      $("#m-served").textContent = m.served;
+      $("#m-left").textContent = m.left;
+      const drinkPct = Math.round(m.drink_share * 100);
+      $("#mix").textContent = m.drink_share ? `Orders, last 5 min: ${drinkPct}% drinks · ${100 - drinkPct}% food` : "";
+
+      $("#staff-total").textContent = `${view.nodes.length} node${view.nodes.length === 1 ? "" : "s"} · ${view.staff_total} staff`;
+      $("#per-node").textContent = view.staff_per_node;
+      const lost = lostNodes(view);
+      $("#node-list").replaceChildren(
+        ...view.nodes.map(node => el("span", {class: "node"}, `${nodeGlyph(view, node)} ${node}`)),
+        ...lost.map(node => el("span", {class: "node lost"}, node)));
+      $("#host").textContent = view.node ? `The shop itself runs on ${view.node}.` : "";
+
+      $("#inventory").replaceChildren(...view.inventory.map(stock => {
+        const pct = Math.round(stock.level / stock.capacity * 100);
+        const flag = {ok: "", low: " ⚠", critical: " 🔥", out: " OUT"}[stock.state];
+        const row = el("div", {class: "stock " + stock.state},
+          el("span", {}, stock.label), el("div", {class: "bar"}, el("div", {style: `width:${pct}%`})), el("span", {class: "pct"}, `${pct}%${flag}`));
+        if (stock.state !== "ok") {
+          const supplier = view.suppliers.find(s => s.state === "en_route" && s.bringing && s.bringing[stock.id]);
+          const parts = [];
+          if (stock.depletion_ms) parts.push(`runs out in ~${mmss(stock.depletion_ms)}`);
+          parts.push(supplier ? `delivery in ${mmss(supplier.eta_ms)}` : "no delivery scheduled");
+          row.append(el("div", {class: "stock-note"}, parts.join(" · ")));
+        }
+        return row;
       }));
+      $("#unavailable").textContent = view.unavailable.length ? `Temporarily unavailable: ${view.unavailable.join(", ")}` : "";
+
+      $("#suppliers").replaceChildren(...view.suppliers.map(s => {
+        const line = el("div", {class: "supplier"}, el("b", {}, `🚚 ${s.name}`), " ");
+        if (s.state === "en_route") {
+          const bringing = Object.entries(s.bringing || {}).map(([id, n]) => `${id.replace("_", " ")} ×${n}`).join(", ");
+          line.append(`en route · ETA ${mmss(s.eta_ms)}`);
+          if (s.delayed) line.append(" ", el("span", {class: "late"}, `delayed +${mmss(s.delay_ms)}`));
+          line.append(el("div", {class: "muted"}, `Bringing ${bringing}`));
+        } else {
+          line.append(el("span", {class: "muted"}, "idle, restocks when shelves run low"));
+        }
+        return line;
+      }));
+
+      renderActivity(view);
+      drawTrend(view);
+      showToasts(view);
+    }
+
+    function lostNodes(view) {
+      const lost = new Set();
+      for (const event of view.events) {
+        const node = event.text.split(" ")[0];
+        if (event.kind === "node_lost") lost.add(node);
+        if (event.kind === "node_joined") lost.delete(node);
+      }
+      view.nodes.forEach(node => lost.delete(node));
+      return [...lost];
+    }
+
+    function renderActivity(view) {
+      const routine = $("#show-routine").checked;
+      const events = view.events.filter(event => routine || event.level !== "quiet").slice(-80).reverse();
+      $("#activity").replaceChildren(...events.map(event => el("li", {class: event.level},
+        el("time", {}, new Date(event.t).toLocaleTimeString([], {hour12: false})), el("span", {}, event.icon), el("span", {}, event.text))));
+    }
+
+    function showToasts(view) {
+      const titles = {node_joined: "🟢 Grove node joined", node_lost: "🔴 Grove node lost", relocated: "↻ Shop moved"};
+      const bodies = {node_joined: "Additional execution capacity is now available.", node_lost: "Shop capacity temporarily reduced.", relocated: ""};
+      for (const event of view.events) {
+        if (event.t <= Math.max(seenToast, pageOpened - 2000) || !titles[event.kind]) continue;
+        seenToast = Math.max(seenToast, event.t);
+        const toast = el("div", {class: "toast " + event.level}, el("b", {}, titles[event.kind]), event.text, bodies[event.kind] ? el("div", {class: "muted"}, bodies[event.kind]) : null);
+        $("#toasts").append(toast);
+        setTimeout(() => toast.remove(), 7000);
+      }
+    }
+
+    function cssVar(name) { return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); }
+
+    function drawTrend(view) {
+      const canvas = $("#trend");
+      const scale = window.devicePixelRatio || 1;
+      const width = canvas.clientWidth, height = canvas.clientHeight;
+      if (!width) return;
+      canvas.width = width * scale; canvas.height = height * scale;
+      const g = canvas.getContext("2d");
+      g.scale(scale, scale);
+      g.clearRect(0, 0, width, height);
+      const points = view.history;
+      if (points.length < 2) return;
+      const left = 30, right = 38, top = 14, bottom = 16;
+      const t1 = points[points.length - 1].t, t0 = Math.max(points[0].t, t1 - 600000);
+      const shown = points.filter(p => p.t >= t0);
+      const x = t => left + (t - t0) / Math.max(1, t1 - t0) * (width - left - right);
+      const maxQ = Math.max(5, ...shown.map(p => Math.max(p.cashier_q, p.barista_q, p.kitchen_q))) * 1.1;
+      const maxW = Math.max(60000, ...shown.map(p => p.avg_wait_ms)) * 1.1;
+      const yQ = v => top + (1 - v / maxQ) * (height - top - bottom);
+      const yW = v => top + (1 - v / maxW) * (height - top - bottom);
+      g.font = "11px system-ui";
+      g.strokeStyle = cssVar("--line"); g.lineWidth = 1;
+      g.strokeRect(left, top, width - left - right, height - top - bottom);
+      g.fillStyle = cssVar("--muted");
+      g.textAlign = "right"; g.fillText(String(Math.round(maxQ)), left - 4, top + 8); g.fillText("0", left - 4, height - bottom);
+      g.textAlign = "left"; g.fillText(mmss(maxW), width - right + 4, top + 8);
+      const line = (color, y, key, dashed) => {
+        g.beginPath(); g.strokeStyle = color; g.lineWidth = 2; g.setLineDash(dashed ? [5, 4] : []);
+        shown.forEach((p, i) => i ? g.lineTo(x(p.t), y(p[key])) : g.moveTo(x(p.t), y(p[key])));
+        g.stroke(); g.setLineDash([]);
+      };
+      line(cssVar("--q-cashier"), yQ, "cashier_q");
+      line(cssVar("--q-kitchen"), yQ, "kitchen_q");
+      line(cssVar("--q-barista"), yQ, "barista_q");
+      line(cssVar("--q-wait"), yW, "avg_wait_ms", true);
+      g.textAlign = "center";
+      for (let i = 1; i < shown.length; i++) {
+        const before = shown[i - 1].nodes, after = shown[i].nodes;
+        if (after === before || !before) continue;
+        const up = after > before;
+        const px = x(shown[i].t);
+        g.strokeStyle = g.fillStyle = up ? cssVar("--good") : cssVar("--bad");
+        g.setLineDash([3, 3]); g.lineWidth = 1; g.beginPath(); g.moveTo(px, top); g.lineTo(px, height - bottom); g.stroke(); g.setLineDash([]);
+        g.fillText(`${up ? "▲" : "▼"} ${after} nodes`, Math.min(Math.max(px, left + 30), width - right - 30), top - 3);
+      }
+    }
+
+    async function refreshShop() {
+      try {
+        const response = await fetch("/api/shop", {cache: "no-store"});
+        if (!response.ok) throw new Error(await response.text());
+        renderShop(await response.json());
+      } catch (error) {
+        $("#live").textContent = "● RECONNECTING";
+        $("#live").className = "off";
+      }
     }
 
     async function refreshStatus() {
-      const summary = document.querySelector("#cluster-summary");
+      const summary = $("#cluster-summary");
       try {
         const response = await fetch("/grove/status", {cache: "no-store"});
         if (!response.ok) throw new Error(await response.text());
         const status = await response.json();
         summary.textContent = `${status.health.toUpperCase()} · ${status.nodes.length} Grovlets`;
         summary.className = status.health;
-        textList(document.querySelector("#nodes"), status.nodes.map(node =>
-          `${node.node_id}: ${node.health}`));
-        textList(document.querySelector("#placements"), status.placements.map(placement =>
+        textList($("#nodes"), status.nodes.map(node => `${node.node_id}: ${node.health}`));
+        textList($("#placements"), (status.placements || []).map(placement =>
           `${placement.name} → ${placement.node_id} (${placement.health})`));
         const active = status.active_artifact;
         const candidate = status.candidate_artifact;
@@ -125,7 +540,7 @@
         if (candidate) lines.push(`Candidate ${candidate.config_revision} · ${candidate.artifact_digest}`);
         if (rollout) lines.push(`Phase ${rollout.phase} · generation ${rollout.generation}`);
         if (rollout?.failure) lines.push(`${rollout.failure.component}: ${rollout.failure.message}`);
-        textList(document.querySelector("#deployment"), lines);
+        textList($("#deployment"), lines);
       } catch (error) {
         summary.textContent = `Status unavailable: ${error.message}`;
         summary.className = "failed";
@@ -136,18 +551,16 @@
       const response = await fetch("/api/orders", {cache: "no-store"});
       if (!response.ok) throw new Error(await response.text());
       const orders = await response.json();
-      textList(document.querySelector("#orders"), orders.map(order =>
-        `${order.ID}: ${order.Status} · ${order.History.join(" → ")}`));
+      textList($("#probe-orders"), orders.map(order => `${order.ID}: ${order.Status} · ${order.History.join(" → ")}`));
     }
 
-    document.querySelector("#order-form").addEventListener("submit", async event => {
+    $("#order-form").addEventListener("submit", async event => {
       event.preventDefault();
-      const result = document.querySelector("#order-result");
-      const orderID = `web-${Date.now()}`;
+      const result = $("#order-result");
       const request = {
-        OrderID: orderID,
-        SKU: document.querySelector("#order-sku").value,
-        Quantity: Number(document.querySelector("#order-quantity").value),
+        OrderID: `web-${Date.now()}`,
+        SKU: $("#order-sku").value,
+        Quantity: Number($("#order-quantity").value),
         AmountCents: 1200,
         ShippingAddress: "30 Grove Lane"
       };
@@ -162,111 +575,26 @@
         result.textContent = `${order.ID} completed: ${order.History.join(" → ")}`;
         await refreshOrders();
       } catch (error) {
-        document.querySelector("#order-result").textContent = `Order failed: ${error.message}`;
+        result.textContent = `Order failed: ${error.message}`;
       }
     });
 
-    const loadIntervalMilliseconds = 1000;
-    const eventColors = {node_joined: "#176338", node_lost: "#a13b2a", generator_relocated: "#8a5a00", recovered: "#1f5f8b"};
-    let loadDesired = false;
-
-    const fmt = (value, digits = 0) => Number(value).toFixed(digits);
-
-    function drawTimeline(view) {
-      const canvas = document.querySelector("#timeline");
-      const scale = window.devicePixelRatio || 1;
-      const width = canvas.clientWidth, height = canvas.clientHeight;
-      canvas.width = width * scale; canvas.height = height * scale;
-      const g = canvas.getContext("2d");
-      g.scale(scale, scale);
-      g.clearRect(0, 0, width, height);
-      const points = view.history;
-      if (points.length < 2) return;
-      const left = 44, right = 44, top = 10, bottom = 20;
-      const t0 = points[0].t, t1 = points[points.length - 1].t;
-      const x = t => left + (t - t0) / Math.max(1, t1 - t0) * (width - left - right);
-      const maxThroughput = Math.max(1, ...points.map(p => p.throughput)) * 1.1;
-      const maxLatency = Math.max(1, ...points.map(p => p.p95_ms)) * 1.1;
-      const yThroughput = v => top + (1 - v / maxThroughput) * (height - top - bottom);
-      const yLatency = v => top + (1 - v / maxLatency) * (height - top - bottom);
-      g.font = "11px system-ui"; g.lineWidth = 1;
-      g.strokeStyle = "#cad8cf"; g.strokeRect(left, top, width - left - right, height - top - bottom);
-      g.fillStyle = "#235c3d"; g.textAlign = "right";
-      g.fillText(fmt(maxThroughput) + " /s", left - 4, top + 8);
-      g.fillStyle = "#8a5a00"; g.textAlign = "left";
-      g.fillText(fmt(maxLatency) + " ms", width - right + 4, top + 8);
-      const line = (color, y, key) => {
-        g.beginPath(); g.strokeStyle = color; g.lineWidth = 2;
-        points.forEach((p, i) => i ? g.lineTo(x(p.t), y(p[key])) : g.moveTo(x(p.t), y(p[key])));
-        g.stroke();
-      };
-      line("#8a5a00", yLatency, "p95_ms");
-      line("#235c3d", yThroughput, "throughput");
-      g.lineWidth = 1; g.textAlign = "center";
-      let lastNodes = points[0].nodes;
-      points.forEach(p => {
-        if (p.nodes !== lastNodes) { lastNodes = p.nodes; g.fillStyle = "#617269"; g.fillText(`${p.nodes} node${p.nodes === 1 ? "" : "s"}`, x(p.t), height - 6); }
-      });
-      view.events.filter(e => e.t >= t0 && e.t <= t1).forEach(e => {
-        g.strokeStyle = g.fillStyle = eventColors[e.kind] || "#617269";
-        g.setLineDash([4, 3]); g.beginPath(); g.moveTo(x(e.t), top); g.lineTo(x(e.t), height - bottom); g.stroke(); g.setLineDash([]);
-        g.fillText(e.kind.replace("_", " "), Math.min(Math.max(x(e.t), left + 30), width - right - 30), top + 20);
-      });
+    function selectTab(grove) {
+      $("#tab-shop").setAttribute("aria-selected", String(!grove));
+      $("#tab-grove").setAttribute("aria-selected", String(grove));
+      $("#shop-view").style.display = grove ? "none" : "block";
+      $("#grove-view").style.display = grove ? "block" : "none";
+      if (grove) { refreshStatus(); refreshOrders().catch(() => {}); } else if (lastView) drawTrend(lastView);
     }
+    $("#tab-shop").addEventListener("click", () => selectTab(false));
+    $("#tab-grove").addEventListener("click", () => selectTab(true));
+    $("#show-routine").addEventListener("change", () => lastView && renderActivity(lastView));
+    window.addEventListener("resize", () => lastView && drawTrend(lastView));
 
-    async function refreshLoad() {
-      const state = document.querySelector("#load-state");
-      try {
-        const response = await fetch("/api/load", {cache: "no-store"});
-        if (!response.ok) throw new Error(await response.text());
-        const view = await response.json();
-        const c = view.current;
-        loadDesired = view.desired;
-        const toggle = document.querySelector("#load-toggle");
-        toggle.textContent = view.desired ? "Load ON" : "Load OFF";
-        toggle.className = view.desired ? "on" : "";
-        state.textContent = !view.generator_available ? "Generator relocating…" : c.running ? "Generator running" : "Generator stopped";
-        state.className = view.generator_available ? "muted" : "degraded";
-        const set = (id, value) => { document.querySelector(id).textContent = value; };
-        set("#m-nodes", view.nodes);
-        set("#m-throughput", fmt(c.throughput, 1));
-        set("#m-p50", fmt(c.p50_ms, 1) + " ms");
-        set("#m-p95", fmt(c.p95_ms, 1) + " ms");
-        set("#m-inflight", c.in_flight);
-        set("#m-concurrency", c.concurrency);
-        set("#m-completed", c.completed);
-        set("#m-failed", c.failed);
-        set("#m-completion", c.completed + c.failed ? fmt(view.completion_rate * 100, 2) + "%" : "–");
-        set("#m-recovery", view.recovery_ms ? fmt(view.recovery_ms / 1000, 1) + " s" : "–");
-        set("#m-generator", view.generator_node || "–");
-        textList(document.querySelector("#distribution"), Object.entries(c.distribution || {}).sort().map(([stage, nodes]) => {
-          const total = Object.values(nodes).reduce((a, b) => a + b, 0) || 1;
-          return `${stage}: ` + Object.entries(nodes).sort().map(([node, n]) => `${node} ${fmt(n / total * 100)}% (${n})`).join(" · ");
-        }));
-        textList(document.querySelector("#events"), view.events.slice().reverse().map(e =>
-          `${new Date(e.t).toLocaleTimeString()} · ${e.message}`));
-        document.querySelectorAll("#events li").forEach((li, i) => { li.className = "ev-" + view.events[view.events.length - 1 - i].kind; });
-        drawTimeline(view);
-      } catch (error) {
-        state.textContent = `Load status unavailable: ${error.message}`;
-        state.className = "failed";
-      }
-    }
-
-    document.querySelector("#load-toggle").addEventListener("click", async () => {
-      const response = await fetch("/api/load", {
-        method: "POST",
-        headers: {"Content-Type": "application/json"},
-        body: JSON.stringify({running: !loadDesired})
-      });
-      if (!response.ok) document.querySelector("#load-state").textContent = await response.text();
-      refreshLoad();
-    });
-
+    setInterval(() => { $("#clock").textContent = new Date().toLocaleTimeString([], {hour12: false}); }, 1000);
+    refreshShop();
+    setInterval(refreshShop, shopIntervalMilliseconds);
     refreshStatus();
-    refreshLoad();
-    setInterval(refreshLoad, loadIntervalMilliseconds);
-    refreshOrders().catch(() => {});
     setInterval(refreshStatus, statusIntervalMilliseconds);
   </script>
 </body>

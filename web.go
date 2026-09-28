@@ -122,17 +122,17 @@ func WebHandlerWithRuntime(
 	readStatus StatusReader,
 	createOrder OrderCreator,
 ) http.Handler {
-	return WebHandlerWithLoad(configuration, configDigest, readStatus, createOrder, nil)
+	return WebHandlerWithShop(configuration, configDigest, readStatus, createOrder, nil)
 }
 
-// WebHandlerWithLoad additionally serves the load/scaling/recovery demo API
-// backed by monitor. A nil monitor disables it.
-func WebHandlerWithLoad(
+// WebHandlerWithShop additionally serves the live coffee-shop view backed by
+// monitor. A nil monitor disables it.
+func WebHandlerWithShop(
 	configuration Configuration,
 	configDigest string,
 	readStatus StatusReader,
 	createOrder OrderCreator,
-	monitor *LoadMonitor,
+	monitor *ShopMonitor,
 ) http.Handler {
 	root, err := fs.Sub(webFiles, "web")
 	if err != nil {
@@ -202,33 +202,12 @@ func WebHandlerWithLoad(
 		ordersMu.Unlock()
 		writeJSON(response, http.StatusCreated, order)
 	})
-	mux.HandleFunc("GET /api/load", func(response http.ResponseWriter, _ *http.Request) {
+	mux.HandleFunc("GET /api/shop", func(response http.ResponseWriter, _ *http.Request) {
 		if monitor == nil {
-			http.Error(response, "load generator is unavailable", http.StatusServiceUnavailable)
+			http.Error(response, "coffee shop is unavailable", http.StatusServiceUnavailable)
 			return
 		}
 		writeJSON(response, http.StatusOK, monitor.View())
-	})
-	mux.HandleFunc("POST /api/load", func(response http.ResponseWriter, request *http.Request) {
-		if monitor == nil {
-			http.Error(response, "load generator is unavailable", http.StatusServiceUnavailable)
-			return
-		}
-		decoder := json.NewDecoder(request.Body)
-		decoder.DisallowUnknownFields()
-		var input struct {
-			Running bool `json:"running"`
-		}
-		if err := decoder.Decode(&input); err != nil {
-			http.Error(response, "decode load request: "+err.Error(), http.StatusBadRequest)
-			return
-		}
-		view, err := monitor.SetDesired(request.Context(), input.Running)
-		if err != nil {
-			http.Error(response, "set load: "+err.Error(), http.StatusBadGateway)
-			return
-		}
-		writeJSON(response, http.StatusOK, view)
 	})
 	mux.Handle("GET /", http.FileServer(http.FS(root)))
 	return mux

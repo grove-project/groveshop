@@ -8,18 +8,28 @@ The demo has two synchronized operational surfaces:
 Both consume Grove's authoritative structured control-plane read model.
 
 ## Browser
-The page keeps two persistent areas:
+The page opens on **Coffee shop**, a live business view of the Grove Coffee
+simulation (see [COFFEE_SHOP.md](COFFEE_SHOP.md)): customers, cashier,
+barista and kitchen stations with their staff and queues, pickup, active
+orders, inventory and suppliers, a ten-minute queue/wait trend and a live
+activity stream. It starts immediately with no setup and no controls. Staff
+are Grove execution capacity, and node joins and losses show up as notices,
+staff changes and queue changes.
+
+A second tab, **Grove runtime**, keeps the operational surfaces the lifecycle
+demo needs:
 
 ```text
 +-----------------------------+---------------------------+
-| Orders UI                   | Grove Cluster Status      |
-| create / inspect orders     | nodes / placement         |
-| order state                 | active + candidate        |
-| business result             | rollout / rollback        |
+| Grove Cluster Status        | Lifecycle probe order     |
+| nodes / placement           | Orders -> Inventory ->    |
+| active + candidate          | Payment -> Shipping       |
+| rollout / rollback          |                           |
 +-----------------------------+---------------------------+
 ```
 
-The Orders pane can create/list orders and show the deterministic progression:
+The probe order shows the deterministic progression Grove's rollout and
+recovery checks rely on:
 
 ```text
 Created -> Reserved -> Paid -> Shipping -> Completed
@@ -27,12 +37,9 @@ Created -> Reserved -> Paid -> Shipping -> Completed
 
 The Cluster Status pane continuously polls Grove and shows cluster health, nodes, service placement/health, active and candidate artifact/build identity, embedded-config identity, deployment phase, and rollback state/reason.
 
-Target polling interval for MVP: approximately 500 ms to 1 second. Use HTTP polling, not WebSockets/SSE, unless a later task changes this requirement.
-
-## Load & capacity demo
-A full-width section above the panes has one control, **Load ON / OFF**, plus live metrics measured by Grove Shop itself (nodes, orders/sec, p50/p95, in-flight, generated load, completed/failed, completion rate, last recovery) and one timeline that does not reset when topology changes. Node joined/lost, load-generator relocated, and workload recovered are annotated on it.
-
-The browser only toggles the experiment. The `LoadGen` component (service 6) is placed once cluster-wide, drives complete orders through the normal `Orders` service, and adapts its concurrency by hill-climbing on measured throughput and latency (no fixed target). Grove recovers it like any other placed service; the Web component's `LoadMonitor` re-applies Load ON to the relocated generator and stitches the timeline.
+The coffee-shop view polls `GET /api/shop` every 500 ms and the cluster status
+every 750 ms. Use HTTP polling, not WebSockets/SSE, unless a later task changes
+this requirement.
 
 ## Stable browser continuity
 The browser must stay open on the same Grove-managed ingress URL and port before, during, and after rollout/rollback.
