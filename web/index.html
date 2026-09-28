@@ -587,14 +587,18 @@
     }
 
     async function refreshShop() {
+      let view;
       try {
         const response = await fetch("/api/shop", {cache: "no-store"});
         if (!response.ok) throw new Error(await response.text());
-        renderShop(await response.json());
+        view = await response.json();
       } catch (error) {
         $("#live").textContent = "● RECONNECTING";
         $("#live").className = "off";
+        return;
       }
+      // Outside the try: a drawing bug is not a lost connection.
+      renderShop(view);
     }
 
     async function refreshStatus() {
