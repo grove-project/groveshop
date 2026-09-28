@@ -40,6 +40,8 @@ type simNode struct {
 
 const simDetectDelay = 3 * time.Second
 
+var rushDemand = groveshop.ShopDemand{Mode: groveshop.DemandRush, PerMinute: 63}
+
 func newSimCluster(nodes int) *simCluster {
 	c := &simCluster{detect: simDetectDelay}
 	for range nodes {
@@ -156,6 +158,11 @@ func startSimShop(t *testing.T, nodes int, seed uint64) *simShop {
 		Capacity: cluster.capacity,
 		Rand:     rand.New(rand.NewPCG(seed, seed^0x9e3779b97f4a7c15)),
 	})
+	// Most scenarios run on the random rush flow at the load the demo had
+	// before the flow became configurable.
+	if err := s.shop.SetDemand(rushDemand); err != nil {
+		t.Fatal(err)
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	s.shop.Open()
 	done := make(chan struct{})
@@ -308,6 +315,56 @@ func TestShopSimulationSteadyShift(t *testing.T) {
 				}
 			})
 		})
+	}
+}
+
+// The default steady flow is the demo's bottleneck: three nodes fall
+// further behind every minute, and joining nodes clears the backlog, faster
+// with each node.
+func TestShopSimulationSteadyFlow(t *testing.T) {
+	cleared := map[int]time.Duration{}
+	for _, join := range []int{1, 2} {
+		synctest.Test(t, func(t *testing.T) {
+			sim := startSimShop(t, 3, 11)
+			if err := sim.shop.SetDemand(groveshop.DefaultDemand()); err != nil {
+				t.Fatal(err)
+			}
+			early := sim.run(2 * time.Minute)
+			behind := sim.run(4 * time.Minute)
+			sim.logSummary("3 nodes", behind)
+			if got := behind.Metrics.ArrivalsPerMin; got < groveshop.DefaultArrivalsPerMin-1 || got > groveshop.DefaultArrivalsPerMin+1 {
+				t.Errorf("steady flow measured %.1f / min, set %d", got, groveshop.DefaultArrivalsPerMin)
+			}
+			if sim.count("rush") != 0 {
+				t.Errorf("%d rushes in steady flow", sim.count("rush"))
+			}
+			line := func(s groveshop.ShopSnapshot) int { return s.Stations[0].Queue }
+			if line(behind) < 25 || line(behind) <= line(early) {
+				t.Errorf("3 nodes kept up: cashier line %d after 2m, %d after 6m", line(early), line(behind))
+			}
+
+			for range join {
+				sim.cluster.join()
+			}
+			for elapsed := time.Duration(0); elapsed < 5*time.Minute; elapsed += time.Second {
+				if line(sim.run(time.Second)) < 3 && elapsed > 10*time.Second {
+					cleared[join] = elapsed
+					break
+				}
+			}
+			after := sim.run(3 * time.Minute)
+			sim.logSummary(fmt.Sprintf("%d nodes", 3+join), after)
+			if cleared[join] == 0 {
+				t.Fatalf("%d nodes did not clear the cashier line in 5 minutes", 3+join)
+			}
+			if line(after) > 5 || after.Metrics.AvgWaitMillis > (15*time.Second).Milliseconds() {
+				t.Errorf("%d nodes: line %d, avg wait %s after clearing", 3+join, line(after), time.Duration(after.Metrics.AvgWaitMillis)*time.Millisecond)
+			}
+		})
+	}
+	t.Logf("cashier line cleared after: %v", cleared)
+	if cleared[2] >= cleared[1] {
+		t.Errorf("a fifth node did not clear the line faster: %v", cleared)
 	}
 }
 

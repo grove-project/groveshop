@@ -188,6 +188,11 @@ func RegisterShop(registry *grove.Registry, shop *Shop) error {
 			if req.Restore != nil {
 				shop.Restore(*req.Restore)
 			}
+			if req.Demand != nil {
+				if err := shop.SetDemand(*req.Demand); err != nil {
+					return nil, err
+				}
+			}
 			return grove.Encode(shop.Snapshot(req.SinceEvent, req.SinceHistory))
 		},
 	)

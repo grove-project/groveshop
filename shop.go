@@ -7,6 +7,7 @@ import (
 	"math/rand/v2"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -125,6 +126,49 @@ type ShopRequest struct {
 	// Restore, when set, hands a freshly opened Shop the state of the Shop
 	// it replaces after Grove relocated it.
 	Restore *ShopCarryover
+	// Demand, when set, changes the customer flow before the snapshot.
+	Demand *ShopDemand
+}
+
+// Customer-flow modes.
+const (
+	// DemandSteady brings customers at an even, constant rate with a fixed
+	// product mix, so the load on the cluster only changes when the flow
+	// setting or the node count does.
+	DemandSteady = "steady"
+	// DemandRush varies the flow around the set rate: a slow wave, random
+	// rushes and a product mix that drifts between drinks and food.
+	DemandRush = "rush"
+)
+
+// DefaultArrivalsPerMin is the customer flow a shop opens with. Three nodes
+// fall steadily behind at this rate; a fourth node clears the backlog in a
+// couple of minutes, a fifth in under one (TestShopSimulationSteadyFlow).
+const DefaultArrivalsPerMin = 120
+
+// MaxArrivalsPerMin bounds the flow that can be set.
+const MaxArrivalsPerMin = 600
+
+// ShopDemand is the customer flow into the shop.
+type ShopDemand struct {
+	Mode      string  `json:"mode"`
+	PerMinute float64 `json:"per_minute"`
+}
+
+// DefaultDemand is the steady flow a shop opens with.
+func DefaultDemand() ShopDemand {
+	return ShopDemand{Mode: DemandSteady, PerMinute: DefaultArrivalsPerMin}
+}
+
+// Validate reports whether d can be applied.
+func (d ShopDemand) Validate() error {
+	if d.Mode != DemandSteady && d.Mode != DemandRush {
+		return fmt.Errorf("unknown customer flow mode %q", d.Mode)
+	}
+	if math.IsNaN(d.PerMinute) || d.PerMinute < 0 || d.PerMinute > MaxArrivalsPerMin {
+		return fmt.Errorf("customer flow must be between 0 and %d per minute", MaxArrivalsPerMin)
+	}
+	return nil
 }
 
 // ShopCarryover is the business state that survives the Shop moving to
@@ -136,6 +180,7 @@ type ShopCarryover struct {
 	OrderSeq    int64          `json:"order_seq"`
 	Inventory   map[string]int `json:"inventory"`
 	Nodes       []string       `json:"nodes"`
+	Demand      *ShopDemand    `json:"demand,omitempty"`
 }
 
 // ShopEvent is one line in the live activity stream.
@@ -251,6 +296,7 @@ type ShopSnapshot struct {
 	OpenedMilli  int64              `json:"opened_ms"`
 	NowMilli     int64              `json:"now_ms"`
 	Nodes        []string           `json:"nodes"`
+	Demand       ShopDemand         `json:"demand"`
 	StaffPerNode int                `json:"staff_per_node"`
 	StaffTotal   int                `json:"staff_total"`
 	Stations     []StationView      `json:"stations"`
@@ -367,8 +413,10 @@ type Shop struct {
 	waits      []stamped
 	waitMillis []int64
 
-	// Demand model.
-	baseRate    float64
+	// Demand model. demand survives the shop reopening; arrivalDebt
+	// accumulates steady arrivals until a whole customer is due.
+	demand      ShopDemand
+	arrivalDebt float64
 	drinkShare  float64
 	foodShare   float64
 	drinkTarget float64
@@ -401,6 +449,7 @@ func NewShop(deps ShopDeps) *Shop {
 		rng:      rng,
 		instance: fmt.Sprintf("%s-%d", deps.Node, time.Now().UnixNano()),
 		enabled:  true,
+		demand:   DefaultDemand(),
 	}
 }
 
@@ -544,7 +593,7 @@ func (s *Shop) openLocked(now time.Time) {
 	for _, spec := range supplierSpecs {
 		s.suppliers = append(s.suppliers, &supplier{spec: spec, state: "idle"})
 	}
-	s.baseRate = 0.9 + 0.3*s.rng.Float64()
+	s.arrivalDebt = 0
 	s.drinkShare, s.foodShare = 0.8, 0.45
 	s.drinkTarget, s.foodTarget = s.drinkShare, s.foodShare
 	s.nextRegime = now.Add(s.uniformDuration(60*time.Second, 150*time.Second))
@@ -564,6 +613,9 @@ func (s *Shop) Restore(carry ShopCarryover) {
 		return
 	}
 	s.restored = true
+	if carry.Demand != nil && carry.Demand.Validate() == nil {
+		s.demand = *carry.Demand
+	}
 	s.served += carry.Served
 	s.left += carry.Left
 	s.customerSeq = max(s.customerSeq, carry.CustomerSeq)
@@ -617,19 +669,60 @@ func (s *Shop) Step(ctx context.Context) {
 	s.dispatchLocked(ctx, now)
 }
 
+// SetDemand changes the customer flow.
+func (s *Shop) SetDemand(demand ShopDemand) error {
+	if err := demand.Validate(); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if demand == s.demand {
+		return nil
+	}
+	now := s.deps.Now()
+	if demand.Mode != s.demand.Mode {
+		// Start the new mode from the regular mix with no rush under way.
+		s.drinkShare, s.foodShare = 0.8, 0.45
+		s.drinkTarget, s.foodTarget = s.drinkShare, s.foodShare
+		s.rushUntil, s.rushFactor = time.Time{}, 1
+		s.nextRush = now.Add(s.uniformDuration(25*time.Second, 70*time.Second))
+		s.nextRegime = now.Add(s.uniformDuration(60*time.Second, 150*time.Second))
+	}
+	s.demand = demand
+	if s.open {
+		text := fmt.Sprintf("Customer flow set to %s / min, steady", formatRate(demand.PerMinute))
+		if demand.Mode == DemandRush {
+			text = fmt.Sprintf("Customer flow set to about %s / min, with rushes", formatRate(demand.PerMinute))
+		}
+		s.addEvent(now, "notice", "demand", "🚪", text)
+	}
+	return nil
+}
+
+func formatRate(perMinute float64) string {
+	return strconv.FormatFloat(math.Round(perMinute*10)/10, 'f', -1, 64)
+}
+
 // arrivalRate is customers per second right now.
 func (s *Shop) arrivalRate(now time.Time) float64 {
-	wave := 1 + 0.25*math.Sin(2*math.Pi*float64(now.Sub(s.opened))/float64(3*time.Minute))
-	rate := s.baseRate * wave
+	rate := s.demand.PerMinute / 60
+	if s.demand.Mode != DemandRush {
+		return rate
+	}
+	rate *= 1 + 0.25*math.Sin(2*math.Pi*float64(now.Sub(s.opened))/float64(3*time.Minute))
 	if now.Before(s.rushUntil) {
 		rate *= s.rushFactor
 	}
 	return rate
 }
 
-// demandLocked evolves the demand model: occasional rushes, and a product mix
-// that drifts between drink-heavy and food-heavy regimes.
+// demandLocked evolves the rush demand model: occasional rushes, and a
+// product mix that drifts between drink-heavy and food-heavy regimes. The
+// steady model does not change.
 func (s *Shop) demandLocked(now time.Time) {
+	if s.demand.Mode != DemandRush {
+		return
+	}
 	if !s.nextRush.After(now) {
 		s.rushFactor = 1.7 + 0.9*s.rng.Float64()
 		s.rushUntil = now.Add(s.uniformDuration(25*time.Second, 55*time.Second))
@@ -653,15 +746,24 @@ func (s *Shop) demandLocked(now time.Time) {
 }
 
 func (s *Shop) arriveLocked(now time.Time) {
-	// Customers arrive in small groups; groups follow a Poisson process.
-	const meanGroup = 1.38
 	elapsed := now.Sub(s.lastStep)
 	s.lastStep = now
 	if elapsed <= 0 {
 		return
 	}
-	expected := s.arrivalRate(now) / meanGroup * min(elapsed, time.Second).Seconds()
-	groups := s.poisson(expected)
+	step := min(elapsed, time.Second).Seconds()
+	if s.demand.Mode != DemandRush {
+		// Steady customers walk in one at a time, evenly spaced.
+		s.arrivalDebt += s.arrivalRate(now) * step
+		for s.arrivalDebt >= 1 {
+			s.arrivalDebt--
+			s.admitLocked(now, 1)
+		}
+		return
+	}
+	// Customers arrive in small groups; groups follow a Poisson process.
+	const meanGroup = 1.38
+	groups := s.poisson(s.arrivalRate(now) / meanGroup * step)
 	for range groups {
 		size := 1
 		if r := s.rng.Float64(); r > 0.92 {
@@ -669,25 +771,30 @@ func (s *Shop) arriveLocked(now time.Time) {
 		} else if r > 0.70 {
 			size = 2
 		}
-		for range size {
-			s.customerSeq++
-			s.arrivals = append(s.arrivals, now)
-			order := &shopOrder{
-				id:       0,
-				customer: s.customerSeq,
-				arrived:  now,
-				patience: s.uniformDuration(45*time.Second, 120*time.Second),
-				wants:    s.chooseLocked(),
-				stage:    "queued",
-			}
-			s.orders[-order.customer] = order // keyed by customer until ordered
-			s.enqueueLocked(StationCashier, &shopTask{order: order, enqueued: now})
+		s.admitLocked(now, size)
+	}
+}
+
+// admitLocked lets a group of size customers into the cashier line.
+func (s *Shop) admitLocked(now time.Time, size int) {
+	for range size {
+		s.customerSeq++
+		s.arrivals = append(s.arrivals, now)
+		order := &shopOrder{
+			id:       0,
+			customer: s.customerSeq,
+			arrived:  now,
+			patience: s.uniformDuration(45*time.Second, 120*time.Second),
+			wants:    s.chooseLocked(),
+			stage:    "queued",
 		}
-		if size == 1 {
-			s.addEvent(now, "quiet", "", "👤", fmt.Sprintf("Customer #%d entered", s.customerSeq))
-		} else {
-			s.addEvent(now, "quiet", "", strings.Repeat("👤", size), fmt.Sprintf("%d customers entered", size))
-		}
+		s.orders[-order.customer] = order // keyed by customer until ordered
+		s.enqueueLocked(StationCashier, &shopTask{order: order, enqueued: now})
+	}
+	if size == 1 {
+		s.addEvent(now, "quiet", "", "👤", fmt.Sprintf("Customer #%d entered", s.customerSeq))
+	} else {
+		s.addEvent(now, "quiet", "", strings.Repeat("👤", size), fmt.Sprintf("%d customers entered", size))
 	}
 }
 
@@ -1138,8 +1245,10 @@ func (s *Shop) congestionLocked(now time.Time) {
 // secondLocked runs once a second: product-mix drift, window trimming and a
 // history sample.
 func (s *Shop) secondLocked(now time.Time) {
-	s.drinkShare = clamp(s.drinkShare+(s.drinkTarget-s.drinkShare)*0.03+0.015*s.rng.NormFloat64(), 0.5, 0.98)
-	s.foodShare = clamp(s.foodShare+(s.foodTarget-s.foodShare)*0.03+0.015*s.rng.NormFloat64(), 0.15, 0.85)
+	if s.demand.Mode == DemandRush {
+		s.drinkShare = clamp(s.drinkShare+(s.drinkTarget-s.drinkShare)*0.03+0.015*s.rng.NormFloat64(), 0.5, 0.98)
+		s.foodShare = clamp(s.foodShare+(s.foodTarget-s.foodShare)*0.03+0.015*s.rng.NormFloat64(), 0.15, 0.85)
+	}
 
 	s.arrivals = trimTimes(s.arrivals, now.Add(-shopRateWindow))
 	for _, station := range Stations {
@@ -1354,6 +1463,7 @@ func (s *Shop) Snapshot(sinceEvent, sinceHistory int64) ShopSnapshot {
 		NowMilli:     now.UnixMilli(),
 		Paused:       s.paused,
 		Nodes:        slices.Clone(s.nodes),
+		Demand:       s.demand,
 		StaffPerNode: StaffPerNode,
 		StaffTotal:   s.staffTotal,
 		Unavailable:  []string{},
@@ -1473,6 +1583,7 @@ func (s *Shop) Snapshot(sinceEvent, sinceHistory int64) ShopSnapshot {
 		}
 		snapshot.Suppliers = append(snapshot.Suppliers, view)
 	}
+	demand := s.demand
 	snapshot.Carryover = ShopCarryover{
 		Served:      s.served,
 		Left:        s.left,
@@ -1480,6 +1591,7 @@ func (s *Shop) Snapshot(sinceEvent, sinceHistory int64) ShopSnapshot {
 		OrderSeq:    s.orderSeq,
 		Inventory:   map[string]int{},
 		Nodes:       slices.Clone(s.nodes),
+		Demand:      &demand,
 	}
 	for id, stock := range s.stock {
 		snapshot.Carryover.Inventory[id] = stock.level

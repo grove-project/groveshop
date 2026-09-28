@@ -209,6 +209,29 @@ func WebHandlerWithShop(
 		}
 		writeJSON(response, http.StatusOK, monitor.View())
 	})
+	mux.HandleFunc("POST /api/shop/demand", func(response http.ResponseWriter, request *http.Request) {
+		if monitor == nil {
+			http.Error(response, "coffee shop is unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		decoder := json.NewDecoder(io.LimitReader(request.Body, 4096))
+		decoder.DisallowUnknownFields()
+		var demand ShopDemand
+		if err := decoder.Decode(&demand); err != nil {
+			http.Error(response, "decode customer flow: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		if err := demand.Validate(); err != nil {
+			http.Error(response, err.Error(), http.StatusBadRequest)
+			return
+		}
+		view, err := monitor.SetDemand(request.Context(), demand)
+		if err != nil {
+			http.Error(response, "set customer flow: "+err.Error(), http.StatusBadGateway)
+			return
+		}
+		writeJSON(response, http.StatusOK, view)
+	})
 	mux.Handle("GET /", http.FileServer(http.FS(root)))
 	return mux
 }
