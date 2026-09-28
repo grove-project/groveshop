@@ -544,7 +544,7 @@ func (s *Shop) openLocked(now time.Time) {
 	for _, spec := range supplierSpecs {
 		s.suppliers = append(s.suppliers, &supplier{spec: spec, state: "idle"})
 	}
-	s.baseRate = 1.3 + 0.4*s.rng.Float64()
+	s.baseRate = 0.9 + 0.3*s.rng.Float64()
 	s.drinkShare, s.foodShare = 0.8, 0.45
 	s.drinkTarget, s.foodTarget = s.drinkShare, s.foodShare
 	s.nextRegime = now.Add(s.uniformDuration(60*time.Second, 150*time.Second))
@@ -1012,6 +1012,11 @@ func (s *Shop) targetAllocationLocked() map[Station]int {
 		// A small baseline keeps idle stations staffed in proportion to the
 		// work they usually get.
 		p := s.pressure(station) + 0.5*meanWorkSeconds(station)
+		if station == StationCashier && s.backloggedLocked() {
+			// Cashiers are holding new orders, so their line is not work
+			// they can do now.
+			p = float64(s.active[station]+1) * meanWorkSeconds(station)
+		}
 		pressures[station] = p
 		sum += p
 	}
@@ -1070,6 +1075,9 @@ func (s *Shop) shiftLocked(now time.Time) {
 	from := s.mostSurplusLocked(target)
 	if from == "" || from == to || target[to]-s.alloc[to] <= 0 || s.alloc[from]-target[from] <= 0 || s.alloc[from] <= 1 {
 		return
+	}
+	if s.active[from] >= s.alloc[from] {
+		return // nobody there is free to move yet
 	}
 	s.alloc[from]--
 	s.alloc[to]++
@@ -1173,12 +1181,31 @@ func (s *Shop) avgWaitLocked() int64 {
 	return sum / int64(len(s.waitMillis))
 }
 
+// backlogPerStaff is how many items may wait per barista or kitchen staff
+// member before the cashiers stop taking new orders.
+const backlogPerStaff = 6
+
+// backloggedLocked reports whether drinks or food are so far behind that the
+// cashiers hold new orders, so customers wait in line, where they can still
+// leave, rather than after paying.
+func (s *Shop) backloggedLocked() bool {
+	for _, station := range []Station{StationBarista, StationKitchen} {
+		if len(s.queues[station]) >= backlogPerStaff*max(1, s.alloc[station]) {
+			return true
+		}
+	}
+	return false
+}
+
 // dispatchLocked starts queued work while stations have free staff.
 func (s *Shop) dispatchLocked(ctx context.Context, now time.Time) {
 	if s.deps.Work == nil || s.paused {
 		return
 	}
 	for _, station := range Stations {
+		if station == StationCashier && s.backloggedLocked() {
+			continue
+		}
 		for s.active[station] < s.alloc[station] {
 			index := slices.IndexFunc(s.queues[station], func(task *shopTask) bool { return !now.Before(task.notUntil) })
 			if index < 0 {

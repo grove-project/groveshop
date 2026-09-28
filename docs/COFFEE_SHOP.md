@@ -65,7 +65,22 @@ do.
 - **Suppliers** (Roastery, Dairy Co., Fresh Foods) are dispatched when one of
   their products drops below 40%, arrive 35–70 s later, and are sometimes
   delayed by 20–50 s.
+- **Backpressure.** When drinks or food fall more than six items per staff
+  member behind, the cashiers stop taking new orders, so customers wait in
+  line, where they can still leave, rather than after paying.
 - **Abandonment.** Customers still in line after 45–120 s leave.
+- **Calibration.** Demand is set so that two nodes fall behind, three nodes
+  handle normal demand but congest in rushes, and four nodes absorb most
+  rushes.
+
+## Testing without Grove
+
+`shop_sim_test.go` runs the real `Shop`, its run loops and the real staff
+`Crew`s against a small in-process stand-in for Grove (round-robin calls
+over live nodes, node kill and join, capacity with a detection delay) inside
+a `testing/synctest` bubble. Thirty minutes of shop time take under a
+second, so demand, staffing and recovery changes can be checked with
+`go test -run TestShopSimulation -v .` before trying them on a real cluster.
 
 ## The page
 
