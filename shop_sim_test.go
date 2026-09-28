@@ -6,10 +6,12 @@ import (
 	"fmt"
 	"math/rand/v2"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"testing/synctest"
 	"time"
 
+	"github.com/grove-project/grove"
 	"github.com/grove-project/groveshop"
 )
 
@@ -391,6 +393,83 @@ func TestShopSimulationAllNodesLost(t *testing.T) {
 		sim.logSummary("rejoined", back)
 		if back.Metrics.Served <= dark.Metrics.Served {
 			t.Error("shop did not resume serving after a node rejoined")
+		}
+	})
+}
+
+// simLease is a Grove lease whose renewal the test controls.
+type simLease struct {
+	held     atomic.Bool
+	released atomic.Bool
+}
+
+func (l *simLease) Held() bool { return l.held.Load() && !l.released.Load() }
+func (l *simLease) Release()   { l.released.Store(true) }
+
+type simLeases struct {
+	mu     sync.Mutex
+	leases []*simLease
+	// pending delays the next claim, as Grove waits out a lapsed lease.
+	pending time.Duration
+}
+
+func (p *simLeases) AcquireExclusive(ctx context.Context, _ string) (grove.Lease, error) {
+	p.mu.Lock()
+	wait := p.pending
+	p.pending = 0
+	p.mu.Unlock()
+	select {
+	case <-time.After(wait):
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	lease := &simLease{}
+	lease.held.Store(true)
+	p.leases = append(p.leases, lease)
+	return lease, nil
+}
+
+func (p *simLeases) latest() (*simLease, int) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.leases[len(p.leases)-1], len(p.leases)
+}
+
+// When Grove stops renewing the lease, the shop pauses, claims the
+// capability again and resumes where it left off.
+func TestShopSimulationLeaseLapses(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		sim := startSimShop(t, 3, 21)
+		leases := &simLeases{}
+		ctx, cancel := context.WithCancel(grove.WithExclusiveProvider(context.Background(), leases))
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			sim.shop.RunOwned(ctx)
+		}()
+		defer func() { cancel(); <-done }()
+
+		opened := sim.run(time.Minute)
+		lease, claims := leases.latest()
+		if opened.Paused || opened.Metrics.Served == 0 || claims != 1 {
+			t.Fatalf("shop not serving on its claim: paused=%v served=%d claims=%d", opened.Paused, opened.Metrics.Served, claims)
+		}
+		leases.mu.Lock()
+		leases.pending = 3 * time.Second // the lapsed lease runs out before a new claim
+		leases.mu.Unlock()
+		lease.held.Store(false)
+		paused := sim.run(2 * time.Second)
+		if !paused.Paused || !lease.released.Load() {
+			t.Fatalf("lapsed lease: paused=%v released=%v", paused.Paused, lease.released.Load())
+		}
+		back := sim.run(5 * time.Second)
+		if _, claims := leases.latest(); claims != 2 || back.Paused || back.Instance != opened.Instance || back.Metrics.Served < opened.Metrics.Served {
+			t.Fatalf("shop not resumed on a new claim: claims=%d paused=%v instance=%s", claims, back.Paused, back.Instance)
+		}
+		if sim.count("paused") != 1 || sim.count("resumed") != 1 {
+			t.Errorf("paused=%d resumed=%d events", sim.count("paused"), sim.count("resumed"))
 		}
 	})
 }
