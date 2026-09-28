@@ -37,10 +37,10 @@ Both Cluster views must show the same membership and service placement. Terminal
 ### 3. Open Grove Shop
 Open the Web URL exposed by the Grove-managed ingress and leave the browser open for the remainder of the lifecycle demo.
 
-The page shows Orders and Grove Cluster Status. Record the ingress address/port; it must not change during rollout or rollback.
+The Grove Coffee shop is already running: customers arrive, the staff (three per Grove node) serve them, and queues, waits and inventory evolve on their own (see [COFFEE_SHOP.md](COFFEE_SHOP.md)). Adding a node in step 2 shows up as more staff; terminating one in step 4 shows up as fewer staff and growing queues. The **Grove runtime** tab shows Grove Cluster Status and the lifecycle probe order. Record the ingress address/port; it must not change during rollout or rollback.
 
 ### 4. Exercise placement and recovery
-Create an order and verify:
+Create a probe order on the **Grove runtime** tab and verify:
 
 ```text
 Created -> Reserved -> Paid -> Shipping -> Completed

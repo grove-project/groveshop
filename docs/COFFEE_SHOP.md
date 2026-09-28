@@ -1,0 +1,101 @@
+# Grove Coffee: the live demo
+
+Grove Shop's browser demo is a coffee shop that is already running when the
+page opens. Nothing is configured and nothing is triggered by hand: customers
+arrive at random, the shop's staff serve them, and the queues, waits and
+inventory evolve from the simulation itself. The staff are Grove execution
+capacity, so adding or losing a Grove node visibly changes what the shop can
+do.
+
+## What maps to what
+
+| Coffee shop | Grove |
+| --- | --- |
+| Customer | Incoming workload |
+| Cashier | `Cashier.TakeOrder` handler |
+| Barista | `Barista.MakeDrink` handler |
+| Kitchen staff | `Kitchen.PrepareFood` handler |
+| Staff member | One execution slot on one node (`StaffPerNode` = 3 per node) |
+| Queue | Work waiting for a free slot (backpressure) |
+| Utilization | Busy slots / assigned slots |
+| The shop | The `Shop` component, one exclusive owner cluster-wide |
+| Adding a node | +3 staff |
+| Losing a node | −3 staff, interrupted work is retried by the rest |
+| Supplier | Asynchronous actor with its own timing |
+| Inventory | Application state |
+
+## How it works
+
+- **Shop** (service 6) runs the simulation. Every node hosts it, and Grove's
+  exclusive capability `groveshop/shop` picks the one that runs it. If that
+  node dies, another node opens the shop and the Web component hands it the
+  previous shop's sales and inventory. If Grove's lease lapses for a few
+  seconds (it can while the cluster recovers from a node loss), the shop
+  pauses and resumes instead of starting over.
+- **Cashier, Barista, Kitchen** (services 7–9) are ordinary Grove handlers
+  on every node. Each piece of work (taking one order, making one drink,
+  preparing one food item) is a `grove.Call`; Grove picks the node. The
+  handler sleeps for the randomly drawn preparation time while holding one of
+  its node's staff slots. The three handlers on a node share that node's
+  slots.
+- **Staff** come from Grove's status read model: every healthy node whose
+  station components are healthy contributes `StaffPerNode` staff.
+- **Shift manager.** Grove today runs every handler on every node and
+  round-robins calls; it has no notion of per-handler load. So the shop
+  itself decides which station its staff work at: every 1.5 s it moves one
+  person from the station that can best spare one to the station with the
+  most outstanding work. Adding a node therefore shows up where the shop
+  needs it (for example, as extra baristas during a drink rush) rather than
+  equally everywhere. Moving that decision into Grove is tracked in
+  [grove#47](https://github.com/grove-project/grove/issues/47).
+
+## Simulation
+
+- **Arrivals** follow a Poisson process around a baseline that differs per
+  run, with a slow wave, groups of 1–3 customers, and random rushes (1.7–2.6×
+  for 25–55 s, spaced minutes apart).
+- **Product mix** drifts between drink-heavy, balanced and food-heavy regimes,
+  so different runs have different bottlenecks.
+- **Orders** fan out: each drink goes to the baristas and each food item to
+  the kitchen, concurrently. The order waits at pickup until every item is
+  ready.
+- **Inventory** is consumed when the cashier takes the order. Customers pick
+  something else of the same kind when their choice is unavailable, and
+  leave if nothing they want can be made.
+- **Suppliers** (Roastery, Dairy Co., Fresh Foods) are dispatched when one of
+  their products drops below 40%, arrive 35–70 s later, and are sometimes
+  delayed by 20–50 s.
+- **Abandonment.** Customers still in line after 45–120 s leave.
+
+## The page
+
+- **Shop floor:** customers in line, the three station cards (staff, busy,
+  waiting, oldest wait, utilization; a 🔥 marker when congested), the pickup
+  counter and the active orders with each item's progress.
+- **Live state:** customers inside, active orders, average and longest wait,
+  drinks and food per minute, served, left unhappy, product mix.
+- **Grove capacity:** online nodes and total staff. The small digit under
+  each staff member is the node that did most of that station's recent work.
+- **Inventory and supply:** stock bars with depletion estimate and delivery
+  ETA, unavailable products, supplier status and delays.
+- **Queues & wait:** the last ten minutes of the three queues and the average
+  wait, with node joins and losses marked.
+- **Live activity:** routine events are muted (and can be hidden); rushes,
+  congestion, stock, suppliers, capacity shifts and node changes stand out.
+- **Grove runtime** tab: the cluster status, placement and rollout state, and
+  the lifecycle probe order Grove's rollout and recovery checks use.
+
+## Demo story
+
+1. Start the artifact and open the page: the shop is already serving.
+2. Wait for a rush or a skewed product mix: a queue grows and the station
+   turns 🔥.
+3. Run the artifact again in a second terminal and **Join** one node: a
+   "Grove node joined" notice appears, three more staff show up where the
+   shop needs them, and the queue drains.
+4. Quit that terminal: the node is lost, staff drop, interrupted work is
+   retried, and the queues show the consequence.
+5. Join again and watch the shop stabilize.
+
+The web page explains what happens to the business; the Grove TUI's
+**Cluster** view explains what Grove does underneath.

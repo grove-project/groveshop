@@ -23,11 +23,14 @@ if err := groveshop.RegisterInventory(registry, inventory); err != nil {
 
 The repository contains the complete extraction:
 
-- Grove Shop business services and deterministic order flow;
+- Grove Coffee, the live coffee-shop simulation whose staff are Grove
+  execution capacity ([`docs/COFFEE_SHOP.md`](docs/COFFEE_SHOP.md));
+- Grove Shop business services and the deterministic order flow Grove's
+  lifecycle probe uses;
 - explicit Grove service and method registration;
 - the application-owned console action;
 - strict customer configuration compilation and validation;
-- the embedded Orders and Cluster Status Web UI;
+- the embedded Web UI: the live coffee shop plus Grove cluster status;
 - good and intentionally broken demo configurations;
 - unit and integration tests running against Grove as a versioned dependency;
 - `runtimeapp`, the explicit composition boundary that connects this

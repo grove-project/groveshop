@@ -18,8 +18,14 @@ const (
 	ServiceShipping grove.ServiceID = 4
 	// ServiceWeb identifies the Grove Shop Web component.
 	ServiceWeb grove.ServiceID = 5
-	// ServiceLoadGen identifies the cluster-wide Grove Shop load generator.
-	ServiceLoadGen grove.ServiceID = 6
+	// ServiceShop identifies the cluster-wide coffee-shop simulation.
+	ServiceShop grove.ServiceID = 6
+	// ServiceCashier identifies the Cashier station.
+	ServiceCashier grove.ServiceID = 7
+	// ServiceBarista identifies the Barista station.
+	ServiceBarista grove.ServiceID = 8
+	// ServiceKitchen identifies the Kitchen station.
+	ServiceKitchen grove.ServiceID = 9
 )
 
 const (
@@ -31,8 +37,14 @@ const (
 	MethodCharge grove.MethodID = 1
 	// MethodArrangeShipping identifies Shipping.Arrange.
 	MethodArrangeShipping grove.MethodID = 1
-	// MethodLoad identifies the exclusive LoadGenerator handler.
-	MethodLoad grove.MethodID = 1
+	// MethodShop identifies the exclusive Shop handler.
+	MethodShop grove.MethodID = 1
+	// MethodTakeOrder identifies Cashier.TakeOrder.
+	MethodTakeOrder grove.MethodID = 1
+	// MethodMakeDrink identifies Barista.MakeDrink.
+	MethodMakeDrink grove.MethodID = 1
+	// MethodPrepareFood identifies Kitchen.PrepareFood.
+	MethodPrepareFood grove.MethodID = 1
 )
 
 var (
@@ -146,37 +158,37 @@ func RegisterShipping(registry *grove.Registry, shipping *Shipping) error {
 	)
 }
 
-// ErrNotLoadOwner is returned when a call reaches a load generator that does
-// not currently own the exclusive capability.
-var ErrNotLoadOwner = errors.New("load generator is not the current owner")
+// ErrNotShopOwner is returned when a call reaches a Shop that does not
+// currently own the exclusive capability.
+var ErrNotShopOwner = errors.New("shop is not the current owner")
 
-// RegisterLoadGen associates the exclusive load-generator handler with the
-// Grove Shop IDs. Every node hosting LoadGen registers it; Grove routes calls
-// only to the current capability owner.
-func RegisterLoadGen(ctx context.Context, registry *grove.Registry, generator *LoadGenerator) error {
+// RegisterShop associates the exclusive Shop handler with the Grove Shop IDs.
+// Every node hosting Shop registers it; Grove routes calls only to the current
+// capability owner, which runs the simulation.
+func RegisterShop(registry *grove.Registry, shop *Shop) error {
 	if registry == nil {
 		return ErrRegistryRequired
 	}
-	if generator == nil {
+	if shop == nil {
 		return ErrServiceRequired
 	}
 	return registry.Register(
-		ServiceLoadGen,
-		MethodLoad,
+		ServiceShop,
+		MethodShop,
 		func(_ context.Context, payload []byte) ([]byte, error) {
-			var req LoadRequest
+			var req ShopRequest
 			if err := grove.Decode(payload, &req); err != nil {
 				return nil, err
 			}
-			if !generator.Enabled() {
-				return nil, ErrNotLoadOwner
+			// A paused former owner still shows its shop: Grove only routes
+			// here while it places the capability on this node.
+			if !shop.Serving() {
+				return nil, ErrNotShopOwner
 			}
-			if req.Apply {
-				// The generator outlives the request, so it runs on the
-				// component's context rather than the call's.
-				generator.SetRunning(ctx, req.Running)
+			if req.Restore != nil {
+				shop.Restore(*req.Restore)
 			}
-			return grove.Encode(generator.Snapshot(req.SinceUnixMilli))
+			return grove.Encode(shop.Snapshot(req.SinceEvent, req.SinceHistory))
 		},
 	)
 }

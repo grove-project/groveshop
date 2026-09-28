@@ -24,9 +24,11 @@ import (
 //
 //	run artifact -> bootstrap cluster
 //	run same artifact -> join (twice)
-//	open the Web ingress, place an order through every service
-//	kill Inventory's node -> services recover -> order succeeds on the same endpoint
-//	restart that node -> cluster converges -> order succeeds on the same endpoint
+//	open the Web ingress: the coffee shop is serving, staffed by every node;
+//	place a lifecycle probe order through every service
+//	kill Inventory's node -> shop loses that node's staff and keeps serving;
+//	services recover -> order succeeds on the same endpoint
+//	restart that node -> cluster converges -> shop staff return -> order succeeds
 //
 // Every wait is condition-based; there are no fixed sleeps.
 func TestGroveShopDemoFlow(t *testing.T) {
@@ -57,8 +59,13 @@ func TestGroveShopDemoFlow(t *testing.T) {
 	})
 	t.Logf("bootstrapped: nodes=%s placements=%s", status.nodeIDs(), status.placementSummary())
 
-	// 3. Open Grove Shop through the Grove-managed ingress.
+	// 3. Open Grove Shop through the Grove-managed ingress: the coffee shop
+	// is already open, staffed by every node, and serving customers.
 	assertDemoWeb(t, ctx, baseURL)
+	shop := waitForShop(t, ctx, baseURL, nodes, "the coffee shop serving customers with 3 nodes of staff", func(s demoShop) bool {
+		return s.StaffTotal == 3*groveshop.StaffPerNode && s.Metrics.Served > 0
+	})
+	t.Logf("shop open on %s: staff=%d served=%d", shop.Node, shop.StaffTotal, shop.Metrics.Served)
 	placeDemoOrder(t, ctx, baseURL, "demo-bootstrap", nodes)
 
 	// 4. Terminate the node hosting Inventory, the service the demo's recovery
@@ -78,6 +85,14 @@ func TestGroveShopDemoFlow(t *testing.T) {
 		return s.everyServicePlacedHealthyOff(victimID)
 	})
 	t.Logf("after kill: health=%s placements=%s", status.Health, status.placementSummary())
+	// The shop loses the killed node's staff and keeps working with the rest.
+	workBefore := waitForShop(t, ctx, baseURL, nodes, "shop staff reduced to the 2 surviving nodes", func(s demoShop) bool {
+		return s.StaffTotal == 2*groveshop.StaffPerNode
+	})
+	shop = waitForShop(t, ctx, baseURL, nodes, "shop still completing work after "+victimID+" was killed", func(s demoShop) bool {
+		return s.Instance != workBefore.Instance || s.Metrics.WorkDone >= workBefore.Metrics.WorkDone+10
+	})
+	t.Logf("after kill: shop on %s staff=%d work done=%d", shop.Node, shop.StaffTotal, shop.Metrics.WorkDone)
 	placeDemoOrder(t, ctx, baseURL, "demo-after-kill", nodes)
 
 	// Restore the killed node and verify every view converges on three
@@ -92,7 +107,51 @@ func TestGroveShopDemoFlow(t *testing.T) {
 		return s.healthy() && s.nodeIDs() == "node-1,node-2,node-3"
 	})
 	t.Logf("after rejoin: nodes=%s placements=%s", status.nodeIDs(), status.placementSummary())
+	shop = waitForShop(t, ctx, baseURL, nodes, "shop staff back to 3 nodes after "+victimID+" rejoined", func(s demoShop) bool {
+		return s.StaffTotal == 3*groveshop.StaffPerNode
+	})
+	t.Logf("after rejoin: shop on %s staff=%d served=%d", shop.Node, shop.StaffTotal, shop.Metrics.Served)
 	placeDemoOrder(t, ctx, baseURL, "demo-after-rejoin", nodes)
+}
+
+type demoShop struct {
+	Available  bool   `json:"available"`
+	Instance   string `json:"instance"`
+	Node       string `json:"node"`
+	StaffTotal int    `json:"staff_total"`
+	Metrics    struct {
+		Served   int64 `json:"served"`
+		WorkDone int64 `json:"work_done"`
+	} `json:"metrics"`
+}
+
+func waitForShop(
+	t *testing.T, ctx context.Context, baseURL string, nodes []*grovetest.Node, want string, done func(demoShop) bool,
+) demoShop {
+	t.Helper()
+	ticker := time.NewTicker(250 * time.Millisecond)
+	defer ticker.Stop()
+	waitCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	defer cancel()
+	var last demoShop
+	var lastErr error
+	for {
+		var shop demoShop
+		requestCtx, requestCancel := context.WithTimeout(waitCtx, 3*time.Second)
+		lastErr = getJSON(requestCtx, baseURL+"/api/shop", &shop)
+		requestCancel()
+		if lastErr == nil {
+			last = shop
+			if shop.Available && done(shop) {
+				return shop
+			}
+		}
+		select {
+		case <-ticker.C:
+		case <-waitCtx.Done():
+			t.Fatalf("wait for %s: %v (last error %v)\nlast shop: %+v\n%s", want, waitCtx.Err(), lastErr, last, dumpLogs(nodes))
+		}
+	}
 }
 
 // buildConfiguredGroveshop produces the demo artifact the way `make build`
@@ -156,7 +215,7 @@ type demoStatus struct {
 }
 
 // demoServices are the services a healthy Grove Shop cluster must place.
-var demoServices = []string{"Orders", "Inventory", "Payment", "Shipping", "Web", "LoadGen"}
+var demoServices = []string{"Orders", "Inventory", "Payment", "Shipping", "Web", "Shop", "Cashier", "Barista", "Kitchen"}
 
 func (s demoStatus) healthy() bool {
 	return s.Ready && s.Health == "healthy" && s.everyServicePlacedHealthyOff("")

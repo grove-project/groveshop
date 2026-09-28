@@ -9,23 +9,37 @@ Browser
 Stable Grove Ingress
    |
    v
-Web
- |
- v
-Orders
- |-- Inventory
- |-- Payment
- `-- Shipping
+Web ------------------------------.
+ |                                 |
+ v                                 v
+Shop (one owner, cluster-wide)    Orders (lifecycle probe)
+ |-- Cashier.TakeOrder            |-- Inventory
+ |-- Barista.MakeDrink            |-- Payment
+ `-- Kitchen.PrepareFood          `-- Shipping
+     (every node, 3 staff each)
 ```
 
-The business logic stays deterministic and small. The value is the Grove lifecycle around it.
+The live demo is Grove Coffee (see [COFFEE_SHOP.md](COFFEE_SHOP.md)): a
+stochastic simulation whose staff are Grove execution slots. The deterministic
+Orders flow stays small; Grove's rollout and recovery checks use it as their
+probe, and the value is the Grove lifecycle around it.
 
 ## Components
 ### Web
 - Serves embedded HTML/CSS/JavaScript assets.
+- Serves the coffee-shop read model (`GET /api/shop`), which it keeps by
+  polling Shop and stitching its activity stream across Shop relocations.
 - Exposes the Orders HTTP API.
 - Exposes/read-proxies the Grove status endpoint.
 - Runs as a Grove-managed component.
+
+### Shop
+Runs the coffee-shop simulation. Hosted on every node; the exclusive
+`groveshop/shop` capability picks the single owner.
+
+### Cashier, Barista, Kitchen
+Ordinary handlers on every node. Each call is one piece of work that holds one
+of its node's staff slots for the drawn preparation time.
 
 ### Orders
 Creates orders and coordinates Inventory, Payment, and Shipping through Grove's explicit invocation model.
@@ -48,7 +62,9 @@ Grove Shop artifact
 │   ├── Orders
 │   ├── Inventory
 │   ├── Payment
-│   └── Shipping
+│   ├── Shipping
+│   ├── Shop
+│   └── Cashier, Barista, Kitchen
 ├── embedded Web UI assets
 ├── Grove runtime/deployment metadata
 ├── Grove Shop operational actions and TUI
