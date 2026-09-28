@@ -33,6 +33,11 @@ func TestShopMonitorCarriesStateAcrossRelocation(t *testing.T) {
 	if view := monitor.View(); !view.Available || view.Node != "node-1" || view.Metrics.Served != 42 {
 		t.Fatalf("first view = %+v", view.Metrics)
 	}
+	rush := groveshop.ShopDemand{Mode: groveshop.DemandRush, PerMinute: 90}
+	if err := first.SetDemand(rush); err != nil {
+		t.Fatal(err)
+	}
+	monitor.Poll(t.Context())
 	events := len(monitor.View().Events)
 
 	unreachable = true
@@ -46,6 +51,9 @@ func TestShopMonitorCarriesStateAcrossRelocation(t *testing.T) {
 	view := monitor.View()
 	if !view.Available || view.Node != "node-2" || view.Metrics.Served != 42 {
 		t.Fatalf("relocated view = node %s %+v", view.Node, view.Metrics)
+	}
+	if view.Demand != rush {
+		t.Fatalf("customer flow after relocation = %+v; want %+v", view.Demand, rush)
 	}
 	if len(view.Events) <= events || !hasEvent(view.Events, "relocated", "node-2") || !hasEvent(view.Events, "open", "node-1") {
 		t.Fatalf("activity stream after relocation = %+v", view.Events)

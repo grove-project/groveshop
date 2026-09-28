@@ -51,11 +51,16 @@ do.
 
 ## Simulation
 
-- **Arrivals** follow a Poisson process around a baseline that differs per
-  run, with a slow wave, groups of 1–3 customers, and random rushes (1.7–2.6×
-  for 25–55 s, spaced minutes apart).
-- **Product mix** drifts between drink-heavy, balanced and food-heavy regimes,
-  so different runs have different bottlenecks.
+- **Customer flow** is set on the page (or `POST /api/shop/demand` with
+  `{"mode": "steady", "per_minute": 120}`) and survives the shop moving to
+  another node. There are two modes:
+  - **Steady** (the default, 120 customers / min): customers walk in one at a
+    time, evenly spaced, with a fixed product mix. The load on the cluster
+    only changes when you change the flow or the nodes.
+  - **Random:** a Poisson process around the set rate, with a slow wave,
+    groups of 1–3 customers, random rushes (1.7–2.6× for 25–55 s, spaced
+    minutes apart), and a product mix that drifts between drink-heavy,
+    balanced and food-heavy regimes.
 - **Orders** fan out: each drink goes to the baristas and each food item to
   the kitchen, concurrently. The order waits at pickup until every item is
   ready.
@@ -69,9 +74,12 @@ do.
   member behind, the cashiers stop taking new orders, so customers wait in
   line, where they can still leave, rather than after paying.
 - **Abandonment.** Customers still in line after 45–120 s leave.
-- **Calibration.** Demand is set so that two nodes fall behind, three nodes
-  handle normal demand but congest in rushes, and four nodes absorb most
-  rushes.
+- **Calibration.** Each node serves roughly 35 customers / min at steady
+  flow. At the default 120 / min, three nodes fall further behind every
+  minute; a fourth node clears a six-minute backlog in about 1.5–2 minutes
+  and a fifth in under one (`TestShopSimulationSteadyFlow`). In random mode
+  around 63 / min, two nodes fall behind, three congest in rushes, and four
+  absorb most rushes.
 
 ## Testing without Grove
 
@@ -84,6 +92,8 @@ second, so demand, staffing and recovery changes can be checked with
 
 ## The page
 
+- **Customer flow:** the rate (slider or number) and mode, applied with
+  **Apply**, and how many nodes that flow needs.
 - **Shop floor:** customers in line, the three station cards (staff, busy,
   waiting, oldest wait, utilization; a 🔥 marker when congested), the pickup
   counter and the active orders with each item's progress.
@@ -103,11 +113,14 @@ second, so demand, staffing and recovery changes can be checked with
 ## Demo story
 
 1. Start the artifact and open the page: the shop is already serving.
-2. Wait for a rush or a skewed product mix: a queue grows and the station
-   turns 🔥.
+2. With three nodes and the default steady flow of 120 customers / min, the
+   cashier line and the average wait climb minute after minute and the
+   stations turn 🔥. Raise or lower the flow under **Customer flow** to make
+   the point stronger or gentler.
 3. Run the artifact again in a second terminal and **Join** one node: a
    "Grove node joined" notice appears, three more staff show up where the
-   shop needs them, and the queue drains.
+   shop needs them, and the queue drains. A fifth node drains it faster, and
+   with five nodes you can push the flow to about 170 / min.
 4. Quit that terminal: the node is lost, staff drop, interrupted work is
    retried, and the queues show the consequence.
 5. Join again and watch the shop stabilize.

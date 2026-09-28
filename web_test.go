@@ -192,3 +192,51 @@ func TestWebHandlerShopAPI(t *testing.T) {
 		t.Fatalf("GET /api/shop without monitor = %d; want 503", off.StatusCode)
 	}
 }
+
+func TestWebHandlerSetsCustomerFlow(t *testing.T) {
+	shop := groveshop.NewShop(groveshop.ShopDeps{Node: "node-1"})
+	shop.Open()
+	monitor := groveshop.NewShopMonitor(func(_ context.Context, request groveshop.ShopRequest) (groveshop.ShopSnapshot, error) {
+		if request.Demand != nil {
+			if err := shop.SetDemand(*request.Demand); err != nil {
+				return groveshop.ShopSnapshot{}, err
+			}
+		}
+		return shop.Snapshot(request.SinceEvent, request.SinceHistory), nil
+	})
+	monitor.Poll(t.Context())
+	if got := monitor.View().Demand; got != groveshop.DefaultDemand() {
+		t.Fatalf("default customer flow = %+v", got)
+	}
+	server := httptest.NewServer(groveshop.WebHandlerWithShop(groveshop.DefaultConfiguration(), "", nil, nil, monitor))
+	defer server.Close()
+
+	post := func(body string) (*http.Response, groveshop.ShopView) {
+		t.Helper()
+		response, err := http.Post(server.URL+"/api/shop/demand", "application/json", strings.NewReader(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer response.Body.Close()
+		var view groveshop.ShopView
+		if response.StatusCode == http.StatusOK {
+			if err := json.NewDecoder(response.Body).Decode(&view); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return response, view
+	}
+	response, view := post(`{"mode":"steady","per_minute":180}`)
+	want := groveshop.ShopDemand{Mode: groveshop.DemandSteady, PerMinute: 180}
+	if response.StatusCode != http.StatusOK || view.Demand != want || !hasEvent(view.Events, "demand", "180 / min") {
+		t.Fatalf("POST /api/shop/demand = %d demand %+v", response.StatusCode, view.Demand)
+	}
+	for _, body := range []string{`{"mode":"steady","per_minute":-1}`, `{"mode":"steady","per_minute":100000}`, `{"mode":"surge","per_minute":60}`, `{"per_minute":60,"extra":1}`} {
+		if response, _ := post(body); response.StatusCode != http.StatusBadRequest {
+			t.Errorf("POST %s = %d; want 400", body, response.StatusCode)
+		}
+	}
+	if got := monitor.View().Demand; got != want {
+		t.Fatalf("customer flow after rejected changes = %+v", got)
+	}
+}

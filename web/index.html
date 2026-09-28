@@ -110,6 +110,14 @@
     #activity li.notice { font-weight: 600; }
     #activity li.good { color: var(--good); font-weight: 600; }
     #activity li.alert { color: var(--bad); font-weight: 700; }
+    .flow-form { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 0.5rem 0.6rem; align-items: center; margin: 0; }
+    .flow-form input[type=range] { width: 100%; min-width: 0; accent-color: var(--accent); padding: 0; border: 0; background: transparent; }
+    .flow-form .rate { display: flex; align-items: baseline; gap: 0.3rem; font-size: 0.8rem; color: var(--muted); }
+    .flow-form input[type=number] { width: 4.6rem; padding: 0.3rem 0.4rem; font-variant-numeric: tabular-nums; }
+    .flow-form select { width: 100%; min-width: 0; font: inherit; font-size: 0.85rem; padding: 0.3rem 0.4rem; border: 1px solid var(--line); border-radius: 0.4rem; background: var(--panel); color: var(--ink); }
+    .flow-form button { padding: 0.35rem 0.8rem; }
+    .flow-form button:disabled { opacity: 0.5; cursor: default; }
+    #flow-note { font-size: 0.78rem; margin: 0.5rem 0 0; }
     label.toggle { font-size: 0.72rem; text-transform: none; letter-spacing: 0; font-weight: 400; }
 
     /* Toasts */
@@ -176,6 +184,20 @@
       </section>
 
       <div class="side">
+        <section class="panel" aria-labelledby="flow-heading">
+          <h2 id="flow-heading"><span>Customer flow</span><span id="flow-current" class="badge">–</span></h2>
+          <form id="flow-form" class="flow-form">
+            <input id="flow-range" type="range" min="0" max="300" step="5" value="120" aria-label="Customers per minute">
+            <span class="rate"><input id="flow-rate" type="number" min="0" max="600" step="1" value="120" aria-label="Customers per minute"> / min</span>
+            <select id="flow-mode" aria-label="Flow pattern">
+              <option value="steady">Steady: even arrivals, fixed mix</option>
+              <option value="rush">Random: waves and rushes around the rate</option>
+            </select>
+            <button id="flow-apply" type="submit" disabled>Apply</button>
+          </form>
+          <p id="flow-note" class="muted"></p>
+        </section>
+
         <section class="panel" aria-labelledby="state-heading">
           <h2 id="state-heading">Live state</h2>
           <div class="metrics">
@@ -272,6 +294,11 @@
     let lastStaff = {};
     let seenToast = 0;
     let lastView = null;
+    let flowEdited = false;
+    let flowError = "";
+    // Roughly what one node's staff can serve at steady flow, measured in the
+    // shop simulation (TestShopSimulationSteadyFlow).
+    const customersPerNodeMinute = 35;
 
     function mmss(ms) {
       const seconds = Math.max(0, Math.round(ms / 1000));
@@ -427,10 +454,59 @@
         return line;
       }));
 
+      renderFlow(view);
       renderActivity(view);
       drawTrend(view);
       showToasts(view);
     }
+
+    function renderFlow(view) {
+      const demand = view.demand;
+      if (!demand) return;
+      const steady = demand.mode === "steady";
+      $("#flow-current").textContent = `${steady ? "" : "~"}${Math.round(demand.per_minute)} / min ${steady ? "steady" : "random"}`;
+      if (!flowEdited) {
+        $("#flow-rate").value = Math.round(demand.per_minute);
+        $("#flow-range").value = Math.round(demand.per_minute);
+        $("#flow-mode").value = demand.mode;
+        $("#flow-apply").disabled = true;
+      }
+      const handles = view.nodes.length * customersPerNodeMinute;
+      const needed = Math.ceil(demand.per_minute / customersPerNodeMinute);
+      const verdict = demand.per_minute > handles
+        ? `more than ${view.nodes.length} node${view.nodes.length === 1 ? "" : "s"} can serve; about ${needed} would keep up.`
+        : "within what the current nodes can serve.";
+      $("#flow-note").textContent = flowError || `Each node serves roughly ${customersPerNodeMinute} customers / min. This flow is ${verdict}`;
+    }
+
+    function editFlow(value) {
+      if (value !== undefined) { $("#flow-rate").value = value; $("#flow-range").value = value; }
+      flowEdited = true;
+      $("#flow-apply").disabled = false;
+    }
+    $("#flow-range").addEventListener("input", event => editFlow(event.target.value));
+    $("#flow-rate").addEventListener("input", event => { $("#flow-range").value = event.target.value; editFlow(); });
+    $("#flow-mode").addEventListener("change", () => editFlow());
+    $("#flow-form").addEventListener("submit", async event => {
+      event.preventDefault();
+      const demand = {mode: $("#flow-mode").value, per_minute: Number($("#flow-rate").value)};
+      $("#flow-apply").disabled = true;
+      try {
+        const response = await fetch("/api/shop/demand", {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify(demand)
+        });
+        if (!response.ok) throw new Error(await response.text());
+        flowEdited = false;
+        flowError = "";
+        renderShop(await response.json());
+      } catch (error) {
+        $("#flow-apply").disabled = false;
+        flowError = `Could not change the flow: ${error.message}`;
+        $("#flow-note").textContent = flowError;
+      }
+    });
 
     function lostNodes(view) {
       const lost = new Set();

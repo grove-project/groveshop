@@ -79,10 +79,25 @@ func (m *ShopMonitor) View() ShopView {
 
 // Poll refreshes the view once.
 func (m *ShopMonitor) Poll(ctx context.Context) {
+	_ = m.poll(ctx, nil)
+}
+
+// SetDemand changes the shop's customer flow and refreshes the view.
+func (m *ShopMonitor) SetDemand(ctx context.Context, demand ShopDemand) (ShopView, error) {
+	if err := demand.Validate(); err != nil {
+		return ShopView{}, err
+	}
+	if err := m.poll(ctx, &demand); err != nil {
+		return ShopView{}, err
+	}
+	return m.View(), nil
+}
+
+func (m *ShopMonitor) poll(ctx context.Context, demand *ShopDemand) error {
 	callCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
 	m.mu.Lock()
-	request := ShopRequest{SinceEvent: m.sinceSeq, SinceHistory: m.sinceHist}
+	request := ShopRequest{SinceEvent: m.sinceSeq, SinceHistory: m.sinceHist, Demand: demand}
 	instance := m.instance
 	m.mu.Unlock()
 
@@ -93,7 +108,7 @@ func (m *ShopMonitor) Poll(ctx context.Context) {
 		m.mu.Lock()
 		carryover := m.carryover
 		m.mu.Unlock()
-		snapshot, err = m.call(callCtx, ShopRequest{Restore: carryover})
+		snapshot, err = m.call(callCtx, ShopRequest{Restore: carryover, Demand: demand})
 	}
 
 	m.mu.Lock()
@@ -101,7 +116,7 @@ func (m *ShopMonitor) Poll(ctx context.Context) {
 	if err != nil {
 		m.view.Available = false
 		m.view.Error = "shop unavailable: " + err.Error()
-		return
+		return err
 	}
 	if snapshot.Instance != m.instance {
 		m.instance = snapshot.Instance
@@ -130,4 +145,5 @@ func (m *ShopMonitor) Poll(ctx context.Context) {
 	m.carryover = &carryover
 	snapshot.Events, snapshot.History = nil, nil
 	m.view = ShopView{ShopSnapshot: snapshot, Available: true}
+	return nil
 }
