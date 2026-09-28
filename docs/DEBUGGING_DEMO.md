@@ -31,8 +31,8 @@ The resulting binary contains the application, Grove runtime, TUI, embedded conf
 
 The debugging sequence is the payoff after the lifecycle demo has already shown:
 
-1. start the first Grove Shop node from the application binary;
-2. start the same binary in two more terminals and join the discovered cluster, for three total nodes;
+1. start Grove Shop from the application binary and confirm **Start new cluster** with three nodes;
+2. start the same binary in a second terminal and join the discovered cluster with more nodes;
 3. open the shared Cluster view in the terminals and show service placement across nodes;
 4. place an order and prove the distributed application works;
 5. build a new Grove Shop binary containing a visible application feature and start it;

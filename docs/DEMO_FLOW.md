@@ -14,25 +14,25 @@ Configuration-only changes use the exact same artifact rollout path.
 
 ## Demo sequence
 
-### 1. Start node 1
+### 1. Start the cluster
 Run the initial artifact:
 
 ```bash
 ./bin/groveshop
 ```
 
-No compatible Grove Shop cluster is discovered, so Grove bootstraps one. Open **Cluster** in the TUI.
+No compatible Grove Shop cluster is discovered, so Grove offers **Start new cluster**. It asks how many nodes to start (default and minimum 3, the size a cluster needs to serve) and the ingress address. Confirm it: this one process hosts node-1, node-2 and node-3. Open **Cluster** in the TUI.
 
-### 2. Join nodes 2 and 3
-Run the exact same artifact in two more terminals:
+### 2. Add nodes from another terminal
+Run the exact same artifact in a second terminal:
 
 ```bash
 ./bin/groveshop
 ```
 
-Each process discovers the existing cluster with the same application and artifact identity. The TUI suggests **Join** as the default action. Confirm it and open **Cluster** in each terminal.
+The process discovers the existing cluster with the same application and artifact identity. The TUI suggests **Join** as the default action and asks how many nodes to add (default 1). Confirm it and open **Cluster** in both terminals.
 
-All three Cluster views must show the same three-node membership and service placement.
+Both Cluster views must show the same membership and service placement. Terminals are not 1:1 with nodes: each process hosts the nodes it started, and quitting it retires all of them.
 
 ### 3. Open Grove Shop
 Open the Web URL exposed by the Grove-managed ingress and leave the browser open for the remainder of the lifecycle demo.
@@ -122,9 +122,8 @@ Expected:
 The human story is intentionally compact:
 
 ```text
-run artifact -> bootstrap cluster
-run same artifact -> join
-run same artifact -> join
+run artifact -> start cluster with 3 nodes
+run same artifact -> join, add N nodes
 
 kill node -> watch shared Cluster views -> service recovers
 
