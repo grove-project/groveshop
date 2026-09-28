@@ -224,7 +224,12 @@ func waitForDemoStatus(
 	var lastErr error
 	for {
 		var status demoStatus
-		if lastErr = getJSON(waitCtx, baseURL+"/grove/status", &status); lastErr == nil {
+		// Bound each poll so one request stuck on a dead node cannot consume
+		// the whole wait.
+		requestCtx, requestCancel := context.WithTimeout(waitCtx, 3*time.Second)
+		lastErr = getJSON(requestCtx, baseURL+"/grove/status", &status)
+		requestCancel()
+		if lastErr == nil {
 			last = status
 			if done(status) {
 				return status
@@ -292,7 +297,9 @@ func placeDemoOrder(t *testing.T, ctx context.Context, baseURL, orderID string, 
 		if err != nil {
 			t.Fatal(err)
 		}
-		order, err := postDemoOrder(waitCtx, baseURL, body)
+		requestCtx, requestCancel := context.WithTimeout(waitCtx, 5*time.Second)
+		order, err := postDemoOrder(requestCtx, baseURL, body)
+		requestCancel()
 		if err == nil {
 			want := []groveshop.OrderStatus{
 				groveshop.OrderCreated, groveshop.OrderReserved, groveshop.OrderPaid, groveshop.OrderShipping, groveshop.OrderCompleted,
